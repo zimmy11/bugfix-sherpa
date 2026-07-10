@@ -1,0 +1,7 @@
+.env*
+*.md
+*.MD
+.venv/
+__pycache__/
+src/bugfix*
+*.pyc
