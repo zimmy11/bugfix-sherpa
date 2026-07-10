@@ -1,4 +1,7 @@
+from __future__ import annotations
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.constants import START, END, StateGraph
+
 
 class FixBugAgent:
     '''
@@ -44,3 +47,18 @@ class FixBugAgent:
         """
         # Implementation for applying the fix
         pass
+    
+    def create_graph(self):
+        """
+        Create a graph representation of the codebase.
+        This method should initialize the graph structure and populate it with nodes and edges.
+        """
+        # Implementation for creating the graph
+        pass
+    
+    def run(self):
+        """
+        Run the bug fixing process: analyze the codebase, identify the bug location, suggest a fix, and apply it.
+        """
+        state = StateGraph()
+ 
