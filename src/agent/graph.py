@@ -1,14 +1,16 @@
 from __future__ import annotations
 from functools import partial
-from agent.deps import load_llms_from_env
+from src.agent.deps import LLMNodesConfig
 from typing import Optional
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.constants import START, END, CompiledStateGraph, StateGraph
+from langgraph.constants import START, END
+from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from src.agent.state import BugFixingState
 from src.agent.nodes.discovery import discovery_node as discovery 
 from src.agent.nodes.ingestion import ingestion_node as ingestion
-from agent.nodes.advisory import advisory_node as advisor
-import os 
+from src.agent.nodes.advisory import advisory_node as advisor
+from src.tools import tools
+from IPython.display import Image, display
 
 class SherpaAgent:
     '''
@@ -16,12 +18,9 @@ class SherpaAgent:
     It uses a graph representation of the codebase to identify and fix bugs based on a given bug description.
     '''
 
-    def __init__(self, repo_url: str, bug_description: str, tools_by_name: list):
-        self.repo_url = repo_url
-        self.bug_description = bug_description
-        self._graph = Optional[CompiledStateGraph] = None
-        self.tools_by_name = [tools for tools in tools_by_name]
-        self.llm = ChatGoogleGenerativeAI(model="gemini-3.1-lite")
+    def __init__(self):
+        self._graph : Optional[CompiledStateGraph] | None = None
+        self.tools = {tool.name: tool for tool in tools}
 
 
 
@@ -31,10 +30,8 @@ class SherpaAgent:
         This method should initialize the graph structure and populate it with nodes and edges.
         """
         # Implementation for creating the graph
-        deps = load_llms_from_env()
-        state = BugFixingState()
-
-        graph = StateGraph(state)
+        deps = LLMNodesConfig.load_llms_from_env()
+        graph = StateGraph(BugFixingState)
 
         graph.add_node("discovery", partial(discovery, llm=deps.discovery))
         graph.add_node("ingestion", partial(ingestion, llm=deps.ingestion))
@@ -46,10 +43,16 @@ class SherpaAgent:
         graph.add_edge("advisory",  END)
 
         self._graph = graph.compile()
-    
+        png_data = self._graph.get_graph().draw_mermaid_png()
+
+        with open("src/agent/graph.png", "wb") as f:
+            f.write(png_data)
+
     def run(self):
         """
         Run the bug fixing process: analyze the codebase, identify the bug location, suggest a fix, and apply it.
         """
-        pass
+        if self._graph is None:
+            self.create_graph()
+        self._graph.invoke(BugFixingState())
  

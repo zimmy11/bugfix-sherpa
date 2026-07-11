@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from github.GithubException import GithubException
 from requests.exceptions import RequestException
 from src.agent.graph import SherpaAgent
-
+import traceback
 
 
 def main():
@@ -38,6 +38,7 @@ def main():
         
     except Exception as e:
         print(f"Error: {e}")
+        traceback.print_exc()
         os._exit(1)
     
 

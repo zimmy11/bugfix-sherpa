@@ -10,4 +10,5 @@ def discovery_node(state: BugFixingState, llm: ChatGoogleGenerativeAI):
     It is responsible for identifying and discovering bugs in the codebase.
     """
     # Implementation for the discovery node
+    print("Discovery node invoked with state:", state)
     pass    

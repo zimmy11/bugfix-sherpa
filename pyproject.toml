@@ -18,6 +18,7 @@ dependencies = [
     # Utilities & Resilienza
     "python-dotenv>=1.0.1",
     "tenacity>=8.3.0",
+    "ipython>=9.15.0",
 ]
 
 [project.optional-dependencies]
