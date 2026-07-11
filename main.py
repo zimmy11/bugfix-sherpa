@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from github.GithubException import GithubException
 from requests.exceptions import RequestException
-from src.agent.graph import BugfixAgent
+from src.agent.graph import SherpaAgent
 
 
 
@@ -12,7 +12,7 @@ def main():
     load_dotenv()
 
     
-    graph = BugfixAgent()
+    graph = SherpaAgent()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger(__name__)
