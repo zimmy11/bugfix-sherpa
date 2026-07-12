@@ -1,21 +1,34 @@
-from __future__ import annotations
-from dataclasses import dataclass
-import os
 from langchain_google_genai import ChatGoogleGenerativeAI
+from src.utils.config import Settings 
+from dataclasses import dataclass
 
 @dataclass
 class LLMNodesConfig:
     discovery: ChatGoogleGenerativeAI
-    ingestion: ChatGoogleGenerativeAI 
+    triage: ChatGoogleGenerativeAI
+    ingestion: ChatGoogleGenerativeAI
+    investigation: ChatGoogleGenerativeAI
     advisory: ChatGoogleGenerativeAI
 
-    @staticmethod
-    def load_llms_from_env() -> LLMNodesConfig:
-        return LLMNodesConfig(
-            discovery=ChatGoogleGenerativeAI(model=os.getenv("DISCOVERY_MODEL", "gemini-3.1-lite")),
-            ingestion=ChatGoogleGenerativeAI(model=os.getenv("INGESTION_MODEL", "gemini-3.1-lite")),
-            advisory=ChatGoogleGenerativeAI(model=os.getenv("ADVISORY_MODEL", "gemini-3.1-lite"))
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Settings,
+    ) -> "LLMNodesConfig":
+        return cls(
+            discovery=ChatGoogleGenerativeAI(
+                model=settings.discovery_model
+            ),
+            triage=ChatGoogleGenerativeAI(
+                model=settings.triage_model
+            ),
+            ingestion=ChatGoogleGenerativeAI(
+                model=settings.ingestion_model
+            ),
+            investigation=ChatGoogleGenerativeAI(
+                model=settings.investigation_model
+            ),
+            advisory=ChatGoogleGenerativeAI(
+                model=settings.advisory_model
+            ),
         )
-
-
-

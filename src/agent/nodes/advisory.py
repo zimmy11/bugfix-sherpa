@@ -8,5 +8,5 @@ def advisory_node(state: BugFixingState, llm: ChatGoogleGenerativeAI):
     It is responsible for providing advice or suggestions on how to fix the identified bug.
     """
     # Implementation for the advisory node
-    print("Advisory node invoked with state:", state)
+    print(f"Attraversamento Nodo Advisory con stato {state}")
     pass

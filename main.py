@@ -1,6 +1,6 @@
 import logging
 import os
-from dotenv import load_dotenv
+from src.utils.config import load_settings
 from github.GithubException import GithubException
 from requests.exceptions import RequestException
 from src.agent.graph import SherpaAgent
@@ -9,10 +9,10 @@ import traceback
 
 def main():
     # We load all the env variables (API KEYS) into the environment
-    load_dotenv()
+    settings = load_settings()
 
     
-    graph = SherpaAgent()
+    graph = SherpaAgent(settings = settings)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger(__name__)

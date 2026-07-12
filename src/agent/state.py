@@ -1,18 +1,105 @@
 from __future__ import annotations
+from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional, Any
+from operator import add
 
 class BugFixingState(BaseModel):
     '''
     State class for the bug fixing process. It holds the current state of the bug fixing process, including the current step, the identified bug location, and the suggested fix.
     '''
-    messages: Annotated[List[dict], add_messages] = Field(default_factory=list, description="List of messages exchanged during the bug fixing process.")
-    local_repo_path: Optional[str] = Field(default=None, description="The local path to the cloned GitHub repository.")
-    repository_name: Optional[str] = Field(default=None, description="The name of the GitHub repository being analyzed.")
-    issue_context: Optional[str] = Field(default=None, description="The context of the issue being fixed.")
-    issue_number: Optional[int] = Field(default=None, description="The number of the issue being fixed.")
-    human_feedback: Optional[str] = Field(default=None, description="Feedback provided by a human during the bug fixing process.")
-    test_logs: Optional[str] = Field(default=None, description="Logs from running tests on the codebase.")
-    files_analyzed: Optional[List[str]] = Field(default=None, description="List of files that have been analyzed during the bug fixing process.")
-    current_hypothesis: Optional[str] = Field(default=None, description="The current hypothesis about the bug and its fix.")
+ # Messaggi scambiati con i modelli
+    messages: Annotated[list[AnyMessage], add_messages] = Field(
+        default_factory=list
+    )
+
+    # Input iniziale
+    github_query: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    language: Optional[str] = None
+    max_results: int = 10
+
+    # Issue selezionata
+    issue_number: Optional[int] = None
+    issue_url: Optional[str] = None
+    issue_title: Optional[str] = None
+    issue_context: Optional[str] = None
+    issue_comments: list[str] = Field(default_factory=list)
+
+    # Risultati Discovery
+    issue_candidates: Annotated[list[dict[str, Any]], add] = Field(
+        default_factory=list
+    )
+    selected_issue: Optional[dict[str, Any]] = None
+
+    # Repository GitHub
+    repository_url: Optional[str] = None
+    repository_name: Optional[str] = None
+    repository_full_name: Optional[str] = None
+    default_branch: Optional[str] = None
+    repository_stats: Optional[dict[str, Any]] = None
+
+    # Risultati Triage
+    triage_status: Optional[str] = None
+    triage_score: Optional[float] = None
+    triage_reason: Optional[str] = None
+    is_issue_feasible: Optional[bool] = None
+    requires_human_review: bool = False
+
+    # Repository locale e Ingestion
+    local_repo_path: Optional[str] = None
+    repository_tree: list[str] = Field(default_factory=list)
+    repository_guides: dict[str, str] = Field(default_factory=dict)
+    project_manifest: Optional[str] = None
+    project_language: Optional[str] = None
+
+    # Investigation
+    files_analyzed: Annotated[list[str], add] = Field(
+        default_factory=list
+    )
+    search_results: Annotated[list[dict[str, Any]], add] = Field(
+        default_factory=list
+    )
+    relevant_symbols: Annotated[list[dict[str, Any]], add] = Field(
+        default_factory=list
+    )
+    investigation_findings: Annotated[list[dict[str, Any]], add] = Field(
+        default_factory=list
+    )
+    error_signatures: Annotated[list[str], add] = Field(
+        default_factory=list
+    )
+    reproduction_steps: Annotated[list[str], add] = Field(
+        default_factory=list
+    )
+
+    # Esecuzione dei test
+    test_command: Optional[str] = None
+    test_logs: Optional[str] = None
+    tests_passed: Optional[bool] = None
+    test_exit_code: Optional[int] = None
+    test_timeout: bool = False
+
+    # Ipotesi tecnica
+    current_hypothesis: Optional[str] = None
+    root_cause: Optional[str] = None
+    confidence_score: Optional[float] = None
+
+    # Advisory e report
+    suggested_strategy: Optional[str] = None
+    proposed_changes: list[str] = Field(default_factory=list)
+    tests_to_add: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    final_report: Optional[str] = None
+
+    # Human-in-the-loop
+    human_feedback: Optional[str] = None
+    approval_status: Optional[str] = None
+
+    # Controllo del workflow
+    current_node: Optional[str] = None
+    status: str = "initialized"
+    error_message: Optional[str] = None
+    retry_count: int = 0
