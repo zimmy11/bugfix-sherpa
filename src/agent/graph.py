@@ -18,6 +18,12 @@ from src.utils.config import Settings
 from langgraph.prebuilt import ToolNode
 from github import Github
 from langchain_core.tools import BaseTool
+from src.agent.router import (
+    route_after_discovery,
+    route_after_ingestion,
+    route_after_triage,
+)
+
 
 class SherpaAgent:
     '''
@@ -31,35 +37,6 @@ class SherpaAgent:
         self.settings = settings
         self.deps = LLMNodesConfig.from_settings(settings=settings)
         self.github_client = github_client
-
-    def route_after_triage(self, state: BugFixingState) -> str:
-        if state.messages:
-            last_message = state.messages[-1]
-            if getattr(last_message, "tool_calls", None):
-                return "tools"
-
-        if state.triage_status in ["accepted", "rejected"]:
-            return state.triage_status
-        raise ValueError(f"triage_status non valido: {state.triage_status!r}")
-
-    def route_after_ingestion(self, state: BugFixingState) -> str:
-        if state.messages:
-            last_message = state.messages[-1]
-            if getattr(last_message, "tool_calls", None):
-                return "tools"
-
-        return "completed"
-
-    def route_after_discovery(self, state: BugFixingState) -> str:
-        if not state.messages:
-            return "completed"
-
-        last_message = state.messages[-1]
-
-        if getattr(last_message, "tool_calls", None):
-            return "tools"
-
-        return "completed"
 
     def _resolve_tool_group(
         self,
@@ -91,8 +68,10 @@ class SherpaAgent:
         """
         # Implementation for creating the graph
 
+
+
         graph = StateGraph(BugFixingState)
-        github_tools = build_github_tools(self.github_client)
+        github_tools = build_github_tools(self.github_client, discovery_queries=self.settings.github_queries, limit=self.settings.github_max_results)
 
         discovery_tools = self._resolve_tool_group(
             "discovery", github_tools
@@ -107,20 +86,26 @@ class SherpaAgent:
         discovery_llm = self.deps.discovery.bind_tools(discovery_tools)
         ingestion_llm = self.deps.ingestion.bind_tools(ingestion_tools)
         triage_llm = self.deps.triage.bind_tools(triage_tools)
-        graph.add_node("discovery", partial(discovery, llm=discovery_llm))
+
+        graph.add_node("discovery", partial(discovery, llm=discovery_llm, settings = self.settings))
         graph.add_node("discovery_tools", ToolNode(discovery_tools))
 
-        graph.add_node("ingestion", partial(ingestion, llm=ingestion_llm))
+        graph.add_node("ingestion", partial(ingestion, llm=ingestion_llm, settings = self.settings))
         graph.add_node("ingestion_tools", ToolNode(ingestion_tools))
-        graph.add_node("advisory", partial(advisor, llm=self.deps.advisory))
-        graph.add_node("triage", partial(triage, llm=triage_llm))
+
+        graph.add_node("advisory", partial(advisor, llm=self.deps.advisory , settings = self.settings))
+        
+        graph.add_node("triage", partial(triage, llm=triage_llm, settings = self.settings))
         graph.add_node("triage_tools", ToolNode(triage_tools))
-        graph.add_node("investigation", partial(investigation, llm=self.deps.investigation))
+
+        graph.add_node("investigation", partial(investigation, llm=self.deps.investigation, settings = self.settings))
         graph.add_node("human_review", human_review)
+
+
         graph.add_edge(START, "discovery")
-        graph.add_conditional_edges("discovery", self.route_after_discovery, {"tools": "discovery_tools", "completed": "triage"})
+        graph.add_conditional_edges("discovery", route_after_discovery, {"tools": "discovery_tools", "completed": "triage"})
         graph.add_edge("discovery_tools", "discovery")
-        graph.add_conditional_edges("triage", self.route_after_triage,
+        graph.add_conditional_edges("triage", route_after_triage,
         {
             "accepted": "ingestion",
             "rejected": "discovery",
@@ -129,7 +114,7 @@ class SherpaAgent:
         graph.add_edge("triage_tools", "triage")
         graph.add_conditional_edges(
             "ingestion",
-            self.route_after_ingestion,
+            route_after_ingestion,
             {
                 "tools": "ingestion_tools",
                 "completed": "investigation",
@@ -146,10 +131,10 @@ class SherpaAgent:
         with open("src/agent/graph.png", "wb") as f:
             f.write(png_data)
 
-    def run(self):
+    def run(self, state: BugFixingState):
         """
         Run the bug fixing process: analyze the codebase, identify the bug location, suggest a fix, and apply it.
         """
         if self._graph is None:
             self.create_graph()
-        self._graph.invoke(BugFixingState())
+        self._graph.invoke(state)

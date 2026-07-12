@@ -15,7 +15,7 @@ class BugFixingState(BaseModel):
     )
 
     # Input iniziale
-    github_query: Optional[str] = None
+    github_query: Optional[list[str]] = None
     labels: list[str] = Field(default_factory=list)
     language: Optional[str] = None
     max_results: int = 10
@@ -28,7 +28,7 @@ class BugFixingState(BaseModel):
     issue_comments: list[str] = Field(default_factory=list)
 
     # Risultati Discovery
-    issue_candidates: Annotated[list[dict[str, Any]], add] = Field(
+    issue_candidates: list[dict[str, Any]] = Field(
         default_factory=list
     )
     selected_issue: Optional[dict[str, Any]] = None

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-
+from datetime import datetime, UTC, timedelta
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Settings(BaseModel):
@@ -13,13 +13,14 @@ class Settings(BaseModel):
     google_api_key: str
 
     # Modelli LLM
-    discovery_model: str = "gemini-3.1-lite"
-    triage_model: str = "gemini-3.1-lite"
-    ingestion_model: str = "gemini-3.1-lite"
+    discovery_model: str = "gemini-3.1-flash-lite"
+    triage_model: str = "gemini-3.1-flash-lite"
+    ingestion_model: str = "gemini-3.1-flash-lite"
     investigation_model: str = "gemini-3.1-pro"
     advisory_model: str = "gemini-3.1-pro"
 
     # Discovery
+    github_queries: list[str] = None
     github_language: str = "python"
     github_labels: list[str] = Field(
         default_factory=lambda: [
@@ -51,6 +52,23 @@ class Settings(BaseModel):
     langsmith_tracing: bool = False
     langsmith_project: str = "sherpa"
 
+
+    @model_validator(mode = "after")
+    def create_github_queries(self):
+        if self.github_queries is not None:
+            return self
+        self.github_queries = [(
+            "is:issue "
+            "is:open "
+            "no:assignee "
+            "archived:false "
+            f"language:{self.github_language} "
+            f'label:"{label}" '
+            f"updated:>={(datetime.now(UTC)- timedelta(days=self.repository_inactivity_days)).date()}"
+        ) for label in self.github_labels]
+        return self
+
+
     @field_validator("github_token", "google_api_key")
     @classmethod
     def validate_secrets(cls, value: str) -> str:
@@ -71,6 +89,8 @@ class Settings(BaseModel):
     @classmethod
     def normalize_workspace_root(cls, value: Path) -> Path:
         return value.expanduser().resolve()
+
+
 
     @field_validator("log_level")
     @classmethod
@@ -110,15 +130,15 @@ def load_settings() -> Settings:
 
         discovery_model=os.getenv(
             "DISCOVERY_MODEL",
-            "gemini-3.1-lite",
+            "gemini-3.1-flash-lite",
         ),
         triage_model=os.getenv(
             "TRIAGE_MODEL",
-            "gemini-3.1-lite",
+            "gemini-3.1-flash-lite",
         ),
         ingestion_model=os.getenv(
             "INGESTION_MODEL",
-            "gemini-3.1-lite",
+            "gemini-3.1-flash-lite",
         ),
         investigation_model=os.getenv(
             "INVESTIGATION_MODEL",

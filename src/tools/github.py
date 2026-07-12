@@ -2,7 +2,7 @@
 
 from langchain_core.tools import tool
 from github import Auth, Github
-
+ 
 def create_github_client(token: str) -> Github:
         """Create an authenticated, read-only GitHub API client."""
         if not token or not token.strip():
@@ -15,30 +15,80 @@ def create_github_client(token: str) -> Github:
             timeout=20,
         )
 
-def build_github_tools(client):
+def build_github_tools(client, discovery_queries, limit):
     @tool
-    def search_github_issues(query: str, limit: int) -> str:
-        """Search GitHub for a limited set of candidate issues.
+    def search_github_issues() -> list[dict]:
+        """Find candidate GitHub issues using the configured search criteria.
 
-        Use this tool during discovery when candidate issues must be found from a
-        GitHub search query. The query should contain GitHub issue-search
-        qualifiers such as ``is:issue``, ``is:open``, ``label`` and ``language``.
-        Do not use it to read a complete issue discussion or inspect local files.
-
-        Args:
-            query: Complete GitHub issue-search query to execute.
-            limit: Maximum number of issues to return. Use a small positive value
-                to keep the result suitable for subsequent triage.
+        Use this tool during Discovery when candidate open-source issues must
+        be found. The search language, labels, activity period and maximum
+        result count are already configured by Bugfix Sherpa. Call this tool
+        without arguments. Do not use it to read complete issue discussions or
+        inspect repository files.
 
         Returns:
-            A serialized collection of matching issues containing only essential
-            metadata such as repository, issue number, title, URL, labels,
-            assignees and a shortened body. Returns an explanatory error result
-            when the query is invalid or GitHub cannot be reached.
+            Candidate issues containing repository name, issue number, title,
+            URL, labels, assignees and a shortened body. Duplicate issues found
+            by multiple configured searches are returned only once.
         """
+        candidates: dict[tuple[str, int], dict] = {}
 
-        # Placeholder implementation - replace with actual GitHub analysis logic
-        pass
+        for query in discovery_queries:
+            results = client.search_issues(
+            query=query,
+            sort="updated",
+            order="desc",
+            )
+
+            for index, issue in enumerate(results):
+                if index >= limit:
+                    break
+
+                repository_full_name = (
+                    issue.repository_url
+                    .removeprefix(
+                        "https://api.github.com/repos/"
+                    )
+                )
+
+                key = (
+                    repository_full_name,
+                    issue.number,
+                )
+
+                candidates[key] = {
+                    "repository_full_name": (
+                        repository_full_name
+                    ),
+                    "issue_number": issue.number,
+                    "title": issue.title,
+                    "url": issue.html_url,
+                    "labels": [
+                        label.name
+                        for label in issue.labels
+                    ],
+                    "assignees": [
+                        assignee.login
+                        for assignee in issue.assignees
+                    ],
+                    "body_excerpt": (
+                        issue.body[:1000]
+                        if issue.body
+                        else None
+                    ),
+                    "updated_at": (
+                        issue.updated_at.isoformat()
+                    ),
+                }
+
+                if len(candidates) >= limit:
+                    break
+
+            if len(candidates) >= limit:
+                break
+
+        return list(candidates.values())
+                  
 
     @tool
     def get_repository_stats(repo_url: str):
