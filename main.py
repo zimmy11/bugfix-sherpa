@@ -5,14 +5,14 @@ from github.GithubException import GithubException
 from requests.exceptions import RequestException
 from src.agent.graph import SherpaAgent
 import traceback
-
+from src.tools.github import create_github_client
 
 def main():
     # We load all the env variables (API KEYS) into the environment
     settings = load_settings()
 
-    
-    graph = SherpaAgent(settings = settings)
+    github_client =  create_github_client(token = settings.github_token)
+    graph = SherpaAgent(settings = settings, github_client = github_client)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger(__name__)

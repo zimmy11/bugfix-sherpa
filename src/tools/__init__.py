@@ -9,6 +9,30 @@ from langchain_core.tools.base import BaseTool
 
 from .ask_human import ask_human
 from .fs_read import fs_read_file
-from .github import github_tool
 
-tools: list[BaseTool] = [fs_read_file, ask_human, github_tool]
+ToolReference = str | BaseTool
+
+discovery_tools: list[ToolReference] = [
+    "search_github_issues",
+    "get_repository_stats",
+]
+
+triage_tools: list[ToolReference] = [
+    "read_issue_thread",
+]
+
+ingestion_tools: list[ToolReference] = [
+    fs_read_file,
+]
+
+human_review_tools: list[ToolReference] = [
+    ask_human,
+]
+
+# GitHub tool names are resolved to client-bound tool instances in create_graph.
+tools: dict[str, list[ToolReference]] = {
+    "discovery": discovery_tools,
+    "triage": triage_tools,
+    "ingestion": ingestion_tools,
+    "human_review": human_review_tools
+}

@@ -7,12 +7,22 @@ from langchain_core.tools import tool
 
 @tool
 def fs_read_file(file_path: str) -> str:
-    """Read the contents of a file from the local filesystem.
+    """Read a text file needed to understand the cloned repository.
+
+    Use this tool during ingestion to inspect small project documents such as
+    README, CONTRIBUTING and dependency manifests. Supply a file path inside
+    the configured repository workspace. Do not use it for binary files,
+    secrets, files outside the workspace or very large source files that
+    should instead be read in bounded chunks.
 
     Args:
-        file_path: The path to the file to be read.
+        file_path: Path of the UTF-8 text file to read, restricted to the
+            current repository workspace.
+
     Returns:
-        str: The contents of the file.
+        The complete text content of the requested file. File-system and
+        decoding failures should be converted to a concise explanatory error
+        result by the final hardened implementation.
     """
     with open(file_path, "r") as f:
         return f.read()

@@ -13,13 +13,14 @@ dependencies = [
     "langchain-core>=0.2.0",
     "langchain-google-genai>=1.0.0",
     # Interazione con GitHub e Sistema
-    "PyGithub>=2.3.0",
+    "pygithub>=2.3.0",
     "GitPython>=3.1.40",
     # Utilities & Resilienza
     "python-dotenv>=1.0.1",
     "tenacity>=8.3.0",
     "ipython>=9.15.0",
     "langsmith>=0.10.0",
+    "langchain>=1.3.13",
 ]
 
 [project.optional-dependencies]

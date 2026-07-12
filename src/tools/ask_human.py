@@ -10,17 +10,19 @@ from langgraph.types import interrupt
 
 @tool
 def ask_human(question: str) -> str:
-    """Pause execution and ask the human a question before proceeding.
+    """Pause graph execution and request a decision from the human reviewer.
 
-    Use this tool whenever you need clarification, confirmation, or additional
-    input from the user before taking a significant action (e.g. deleting data,
-    sending emails, making purchases, or any irreversible operation).
+    Use this tool only when an LLM-driven node genuinely needs clarification
+    before continuing. For Bugfix Sherpa's mandatory final review, prefer a
+    deterministic Human Review node that calls ``interrupt`` directly instead
+    of allowing an LLM to decide whether the pause happens.
 
     Args:
-        question: The question to ask the human.
+        question: A specific question that includes the relevant context and
+            clearly states which decision or missing information is required.
 
     Returns:
-        str: The human's response.
+        The human response supplied when the interrupted graph is resumed.
     """
     user_response = interrupt(question)
     return str(user_response)

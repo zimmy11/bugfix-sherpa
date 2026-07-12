@@ -51,12 +51,12 @@ class Settings(BaseModel):
     langsmith_tracing: bool = False
     langsmith_project: str = "sherpa"
 
-    # @field_validator("github_token", "google_api_key")
-    # @classmethod
-    # def validate_secrets(cls, value: str) -> str:
-    #     if not value or not value.strip():
-    #         raise ValueError("La variabile non può essere vuota")
-    #     return value.strip()
+    @field_validator("github_token", "google_api_key")
+    @classmethod
+    def validate_secrets(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("La variabile non può essere vuota")
+        return value.strip()
 
     @field_validator("github_max_results")
     @classmethod
