@@ -16,6 +16,7 @@ from src.tools import tools
 from src.tools.github import build_github_tools
 from src.utils.config import Settings
 from langgraph.prebuilt import ToolNode
+from langgraph.types import RetryPolicy
 from github import Github
 from langchain_core.tools import BaseTool
 from src.agent.router import (
@@ -71,7 +72,22 @@ class SherpaAgent:
 
 
         graph = StateGraph(BugFixingState)
-        github_tools = build_github_tools(self.github_client, discovery_queries=self.settings.github_queries, limit=self.settings.github_max_results)
+        tool_retry_policy = RetryPolicy(
+            initial_interval=self.settings.api_retry_min_seconds,
+            backoff_factor=2.0,
+            max_interval=self.settings.api_retry_max_seconds,
+            max_attempts=3,
+            jitter=True,
+        )
+        github_tools = build_github_tools(
+            self.github_client,
+            discovery_queries=self.settings.github_queries,
+            limit=self.settings.github_max_results,
+            min_stars=self.settings.github_min_stars,
+            repository_inactivity_days=(
+                self.settings.repository_inactivity_days
+            ),
+        )
 
         discovery_tools = self._resolve_tool_group(
             "discovery", github_tools
@@ -88,7 +104,11 @@ class SherpaAgent:
         triage_llm = self.deps.triage.bind_tools(triage_tools)
 
         graph.add_node("discovery", partial(discovery, llm=discovery_llm, settings = self.settings))
-        graph.add_node("discovery_tools", ToolNode(discovery_tools))
+        graph.add_node(
+            "discovery_tools",
+            ToolNode(discovery_tools),
+            retry_policy=tool_retry_policy,
+        )
 
         graph.add_node("ingestion", partial(ingestion, llm=ingestion_llm, settings = self.settings))
         graph.add_node("ingestion_tools", ToolNode(ingestion_tools))
@@ -96,7 +116,11 @@ class SherpaAgent:
         graph.add_node("advisory", partial(advisor, llm=self.deps.advisory , settings = self.settings))
         
         graph.add_node("triage", partial(triage, llm=triage_llm, settings = self.settings))
-        graph.add_node("triage_tools", ToolNode(triage_tools))
+        graph.add_node(
+            "triage_tools",
+            ToolNode(triage_tools),
+            retry_policy=tool_retry_policy,
+        )
 
         graph.add_node("investigation", partial(investigation, llm=self.deps.investigation, settings = self.settings))
         graph.add_node("human_review", human_review)
@@ -108,7 +132,7 @@ class SherpaAgent:
         graph.add_conditional_edges("triage", route_after_triage,
         {
             "accepted": "ingestion",
-            "rejected": "discovery",
+            "rejected": END,
             "tools": "triage_tools"
             },)
         graph.add_edge("triage_tools", "triage")

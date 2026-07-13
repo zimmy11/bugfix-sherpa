@@ -15,27 +15,6 @@ def _message_content(message):
     return message.content
 
 
-def _response_text(content) -> str:
-    """Normalizza il contenuto della risposta Gemini in testo JSON."""
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(
-                block.get("text"), str
-            ):
-                parts.append(block["text"])
-        return "".join(parts)
-
-    raise TypeError(
-        f"Formato risposta LLM non supportato: {type(content).__name__}"
-    )
-
-
 def triage_node(
     state: BugFixingState,
     llm: ChatGoogleGenerativeAI,
@@ -46,48 +25,36 @@ def triage_node(
     # Recupera i thread eventualmente già richiesti dall'LLM in un passaggio
     # precedente del Triage.
     thread_by_key = {}
-    print(f"Attraversamento Nodo Triage con stato: {state}")
-
-    for message in state.messages:
+    print(f"Attraversamento Nodo Triage con stato")
+    
+    for message in reversed(state.messages):
         if not isinstance(message, ToolMessage):
             continue
         if message.name != "read_issue_thread":
             continue
 
-        try:
-            thread = _message_content(message)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        tool_result  = _message_content(message)
+        if not isinstance(tool_result, list):
             continue
 
-        if not isinstance(thread, dict):
-            continue
-        if "repository_full_name" not in thread:
-            continue
-        if "issue_number" not in thread:
-            continue
+        for candidate in tool_result:
+            if not isinstance(candidate, dict):
+                continue
+            
+            key = str(candidate['repository_full_name']) + '#' + str(candidate['issue_number'])
+            thread_by_key[key] = candidate
+        break
 
-        key = (
-            f"{thread['repository_full_name']}#{thread['issue_number']}"
-        )
-        thread_by_key[key] = thread
-
-    issue_contexts = dict(state.issue_contexts)
-    issue_contexts.update(thread_by_key)
 
     enriched_candidates = []
     for candidate in state.issue_candidates:
-        key = (
-            f"{candidate['repository_full_name']}#"
-            f"{candidate['issue_number']}"
-        )
         enriched_candidate = dict(candidate)
-
-        if key in thread_by_key:
-            thread = thread_by_key[key]
-            enriched_candidate["full_body"] = thread.get("body", "")
+        candidate_key = str(candidate["repository_full_name"]) + "#" + str(candidate["issue_number"])
+        if candidate_key in thread_by_key:
+            thread = thread_by_key[candidate_key]
+            enriched_candidate["body"] = thread.get("body", "")
             enriched_candidate["comments"] = thread.get("comments", [])
             enriched_candidate["issue_state"] = thread.get("state")
-
         enriched_candidates.append(enriched_candidate)
 
     candidates_json = json.dumps(
@@ -98,17 +65,26 @@ def triage_node(
 
     # La richiesta finale è sempre l'ultimo messaggio. Il modello può quindi
     # decidere se emettere una tool_call oppure produrre la selezione finale.
+    threads_loaded = bool(thread_by_key)
+    if threads_loaded:
+        tool_instruction = (
+            "I dettagli e i commenti delle candidate sono già presenti. "
+            "Non chiamare nuovamente read_issue_thread."
+        )
+    else:
+        tool_instruction = (
+            "Prima di selezionare una issue, chiama read_issue_thread una sola "
+            "volta passando l'intera lista delle candidate."
+        )
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(
             content=(
-                "Analizza le candidate qui sotto. Usa read_issue_thread "
-                "solo se le informazioni disponibili non sono sufficienti "
-                "per valutare una candidate. Dopo gli eventuali tool, "
-                "scegli una sola issue e restituisci esclusivamente JSON "
-                "valido.\n\n"
+                f"{tool_instruction}\n"
+                "Analizza tutte le candidate, scegline al massimo una e "
+                "restituisci esclusivamente JSON valido.\n\n"
                 f"Candidate:\n{candidates_json}"
-            )
+            ), 
         ),
     ]
 
@@ -120,7 +96,7 @@ def triage_node(
     if result.tool_calls:
         return {
             "messages": [result],
-            "issue_contexts": issue_contexts,
+            "issue_candidates": enriched_candidates,
             "current_node": "triage",
         }
 
@@ -129,14 +105,13 @@ def triage_node(
             "Il modello Triage ha restituito una risposta vuota"
         )
 
-    response_text = _response_text(result.content).strip()
+    response_text = result.content[0]["text"] if isinstance(result.content, list) else result.content
     data = json.loads(response_text)
     selected_issue = data.get("selected_issue")
 
     if selected_issue is None:
         return {
             "messages": [result],
-            "issue_contexts": issue_contexts,
             "selected_issue": None,
             "triage_status": "rejected",
             "triage_reason": data.get("reason"),
@@ -148,10 +123,28 @@ def triage_node(
         f"{selected_issue['issue_number']}"
     )
     selected_thread = thread_by_key.get(selected_key, {})
+    selected_candidate = next(
+    (
+        candidate
+        for candidate in enriched_candidates
+        if (
+            f"{candidate['repository_full_name']}#"
+            f"{candidate['issue_number']}"
+        ) == selected_key
+    ),
+    None,
+    )
+    if selected_candidate is None:
+        raise ValueError(
+            "L'LLM ha selezionato una issue non presente nelle candidate"
+            )
+
+    repository_stats = selected_candidate.get("repository_stats", {})
+    default_branch = repository_stats.get("default_branch")
 
     return {
         "messages": [result],
-        "issue_contexts": issue_contexts,
+        "issue_candidates": enriched_candidates,
         "selected_issue": selected_issue,
         "issue_number": selected_issue["issue_number"],
         "issue_url": selected_issue.get("url"),
@@ -159,7 +152,9 @@ def triage_node(
         "repository_full_name": selected_issue[
             "repository_full_name"
         ],
-        "issue_context": selected_thread.get("body"),
+        "repository_stats": repository_stats,
+        "default_branch": default_branch,
+        "issue_body": selected_thread.get("body"),
         "issue_comments": [
             comment.get("body", "")
             for comment in selected_thread.get("comments", [])

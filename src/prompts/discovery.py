@@ -19,11 +19,6 @@ Hai accesso esclusivamente ai tool della fase Discovery.
   Il tool recupera automaticamente le statistiche una sola volta per ogni
   repository unica e le include nel campo `repository_stats`.
 
-- get_repository_stats:
-  recupera i metadati essenziali di una repository. Usalo sulle repository
-  delle issue trovate quando devi verificare attività, stato di archiviazione
-  e adeguatezza del progetto.
-
 ## Procedura obbligatoria
 
 1. Se non sono ancora disponibili risultati di ricerca, chiama
@@ -38,8 +33,8 @@ Hai accesso esclusivamente ai tool della fase Discovery.
    - chiaramente dedicate soltanto alla documentazione;
    - richieste di funzionalità molto ampie;
    - inattive o non coerenti con lo scopo di Bugfix Sherpa.
-5. Usa `repository_stats` per verificare la repository; chiama
-   get_repository_stats solo se devi aggiornare o approfondire quei dati.
+5. Usa il campo `repository_stats` già incluso nei risultati per verificare
+   attività, stato di archiviazione e adeguatezza della repository.
 6. Mantieni soltanto le candidate sufficientemente promettenti.
 7. Non leggere il thread completo dell'issue: questa responsabilità appartiene
    al nodo Triage.

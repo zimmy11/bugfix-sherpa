@@ -14,7 +14,6 @@ ToolReference = str | BaseTool
 
 discovery_tools: list[ToolReference] = [
     "search_github_issues",
-    "get_repository_stats",
 ]
 
 triage_tools: list[ToolReference] = [

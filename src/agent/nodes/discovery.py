@@ -6,6 +6,13 @@ from src.prompts.discovery import DISCOVERY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 import json 
 
+
+def _message_content(message: ToolMessage):
+    """Restituisce il contenuto del tool come oggetto Python."""
+    if isinstance(message.content, str):
+        return json.loads(message.content)
+    return message.content
+
 def discovery_node(state: BugFixingState, llm: ChatGoogleGenerativeAI, settings: Settings):
     """
     This function represents the discovery node in the bug fixing process.
@@ -33,17 +40,21 @@ def discovery_node(state: BugFixingState, llm: ChatGoogleGenerativeAI, settings:
     candidates = list(state.issue_candidates)
     for tool_call in all_tool_calls:
         if tool_call.name == "search_github_issues":
-            content = json.loads(tool_call.content)
-            candidates.extend([ candidate for candidate in content])
+            content = _message_content(tool_call)
 
-                
+            if isinstance(content, dict):
+                content = content.get("candidates", [])
 
-
-
-
+            if not isinstance(content, list):
+                continue
+            candidates.extend(
+                candidate
+                for candidate in content
+                if isinstance(candidate, dict)
+            )
 
     return {
         "messages": [response],
         "issue_candidates": candidates,
         "current_node": "discovery",
-    }    
+    }

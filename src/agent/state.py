@@ -24,7 +24,7 @@ class BugFixingState(BaseModel):
     issue_number: Optional[int] = None
     issue_url: Optional[str] = None
     issue_title: Optional[str] = None
-    issue_context: Optional[str] = None
+    issue_body: Optional[str] = None
     issue_comments: list[str] = Field(default_factory=list)
     selected_issue: Optional[dict[str, Any]] = None
 
@@ -32,19 +32,16 @@ class BugFixingState(BaseModel):
     issue_candidates: list[dict[str, Any]] = Field(
         default_factory=list
     )
-    issue_contexts: dict[str, dict[str, Any]] = Field(
-        default_factory=dict
-    )
+
 
     # Repository GitHub
     repository_full_name: Optional[str] = None
     default_branch: Optional[str] = None
+    repository_stats: Optional[dict[str, Any]] = None
 
     # Risultati Triage
     triage_status: Optional[str] = None
     triage_reason: Optional[str] = None
-    is_issue_feasible: Optional[bool] = None
-    requires_human_review: bool = False
 
     # Repository locale e Ingestion
     local_repo_path: Optional[str] = None
@@ -72,6 +69,8 @@ class BugFixingState(BaseModel):
     reproduction_steps: Annotated[list[str], add] = Field(
         default_factory=list
     )
+    is_issue_feasible: Optional[bool] = None
+
 
     # Esecuzione dei test
     test_command: Optional[str] = None

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from datetime import datetime, UTC, timedelta
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -28,8 +27,9 @@ class Settings(BaseModel):
             "help wanted",
         ]
     )
-    github_max_results: int = 10
-    repository_inactivity_days: int = 365
+    github_max_results: int = 30
+    github_min_stars: int = 100
+    repository_inactivity_days: int = 7
 
     # Workspace locale
     workspace_root: Path = Path("./workspace")
@@ -61,12 +61,10 @@ class Settings(BaseModel):
             "is:issue "
             "is:open "
             "no:assignee "
-            "archived:false "
-            '("AI agent" OR "LLM" OR langgraph OR crewai OR autogen) '
-            "in:title,body "
             f"language:{self.github_language} "
             f'label:"{label}" '
-            f"updated:>={(datetime.now(UTC)- timedelta(days=self.repository_inactivity_days)).date()}"
+            '("AI agent" OR LLM OR langgraph OR crewai OR autogen) '
+            "in:title,body"
         ) for label in self.github_labels]
         return self
 
@@ -85,6 +83,22 @@ class Settings(BaseModel):
             raise ValueError(
                 "github_max_results deve essere compreso tra 1 e 100"
             )
+        return value
+
+    @field_validator("github_labels")
+    @classmethod
+    def validate_github_labels(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("github_labels deve contenere almeno una label")
+        return value
+
+    @field_validator(
+        "github_min_stars",
+    )
+    @classmethod
+    def validate_github_minimums(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Le soglie GitHub non possono essere negative")
         return value
 
     @field_validator("workspace_root")
@@ -157,12 +171,15 @@ def load_settings() -> Settings:
         ),
         github_labels=labels,
         github_max_results=int(
-            os.getenv("GITHUB_MAX_RESULTS", "10")
+            os.getenv("GITHUB_MAX_RESULTS", "20")
+        ),
+        github_min_stars=int(
+            os.getenv("GITHUB_MIN_STARS", "100")
         ),
         repository_inactivity_days=int(
             os.getenv(
                 "REPOSITORY_INACTIVITY_DAYS",
-                "365",
+                "7",
             )
         ),
 

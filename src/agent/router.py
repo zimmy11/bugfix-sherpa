@@ -5,7 +5,7 @@ def route_after_triage(state: BugFixingState) -> str:
         last_message = state.messages[-1]
         if getattr(last_message, "tool_calls", None):
             return "tools"
-
+    
     if state.triage_status in ["accepted", "rejected"]:
         return state.triage_status
     raise ValueError(f"triage_status non valido: {state.triage_status!r}")
