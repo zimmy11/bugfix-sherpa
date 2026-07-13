@@ -9,5 +9,5 @@ def node_investigation( state: BugFixingState, llm: ChatGoogleGenerativeAI, sett
     It uses a language model (llm) to analyze the bug description and suggest potential fixes.
     """
 
-    print(f"Attraversamento Nodo Investigation con stato {state}")
+    print(f"Attraversamento Nodo Investigation con stato")
     pass

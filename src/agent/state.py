@@ -26,23 +26,22 @@ class BugFixingState(BaseModel):
     issue_title: Optional[str] = None
     issue_context: Optional[str] = None
     issue_comments: list[str] = Field(default_factory=list)
+    selected_issue: Optional[dict[str, Any]] = None
 
     # Risultati Discovery
     issue_candidates: list[dict[str, Any]] = Field(
         default_factory=list
     )
-    selected_issue: Optional[dict[str, Any]] = None
+    issue_contexts: dict[str, dict[str, Any]] = Field(
+        default_factory=dict
+    )
 
     # Repository GitHub
-    repository_url: Optional[str] = None
-    repository_name: Optional[str] = None
     repository_full_name: Optional[str] = None
     default_branch: Optional[str] = None
-    repository_stats: Optional[dict[str, Any]] = None
 
     # Risultati Triage
     triage_status: Optional[str] = None
-    triage_score: Optional[float] = None
     triage_reason: Optional[str] = None
     is_issue_feasible: Optional[bool] = None
     requires_human_review: bool = False

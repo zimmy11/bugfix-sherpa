@@ -16,6 +16,8 @@ Hai accesso esclusivamente ai tool della fase Discovery.
   cerca issue utilizzando criteri già configurati dall'applicazione.
   Linguaggio, label, periodo di attività e numero massimo di risultati sono
   già impostati. Il tool va chiamato senza inventare o modificare query.
+  Il tool recupera automaticamente le statistiche una sola volta per ogni
+  repository unica e le include nel campo `repository_stats`.
 
 - get_repository_stats:
   recupera i metadati essenziali di una repository. Usalo sulle repository
@@ -36,7 +38,8 @@ Hai accesso esclusivamente ai tool della fase Discovery.
    - chiaramente dedicate soltanto alla documentazione;
    - richieste di funzionalità molto ampie;
    - inattive o non coerenti con lo scopo di Bugfix Sherpa.
-5. Quando necessario, usa get_repository_stats per verificare la repository.
+5. Usa `repository_stats` per verificare la repository; chiama
+   get_repository_stats solo se devi aggiornare o approfondire quei dati.
 6. Mantieni soltanto le candidate sufficientemente promettenti.
 7. Non leggere il thread completo dell'issue: questa responsabilità appartiene
    al nodo Triage.
@@ -78,6 +81,17 @@ Restituisci esclusivamente un oggetto JSON con questa struttura:
       "assignees": [],
       "body_excerpt": "Estratto breve della descrizione",
       "updated_at": "data restituita da GitHub",
+      "repository_stats": {
+        "repository_full_name": "owner/project",
+        "stars": 420,
+        "forks": 35,
+        "open_issues": 28,
+        "archived": false,
+        "default_branch": "main",
+        "last_pushed_at": "data restituita da GitHub",
+        "has_issues": true,
+        "license": "MIT"
+      },
       "discovery_score": 0.85,
       "discovery_reason": "Motivo sintetico della valutazione"
     }

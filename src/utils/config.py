@@ -36,7 +36,7 @@ class Settings(BaseModel):
     max_repository_tree_depth: int = 4
     max_file_chunk_lines: int = 200
     max_file_chunk_chars: int = 20_000
-    max_search_results: int = 50
+    max_search_results: int = 20
 
     # Resilienza
     api_max_retries: int = 3
@@ -62,6 +62,8 @@ class Settings(BaseModel):
             "is:open "
             "no:assignee "
             "archived:false "
+            '("AI agent" OR "LLM" OR langgraph OR crewai OR autogen) '
+            "in:title,body "
             f"language:{self.github_language} "
             f'label:"{label}" '
             f"updated:>={(datetime.now(UTC)- timedelta(days=self.repository_inactivity_days)).date()}"

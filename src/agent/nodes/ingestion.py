@@ -10,5 +10,5 @@ def ingestion_node(state : BugFixingState, llm: ChatGoogleGenerativeAI, settings
     It is responsible for ingesting and processing the codebase to identify potential bugs.
     """
     # Implementation for the ingestion node
-    print(f"Attraversamento Nodo Ingestion con stato {state}")
+    print(f"Attraversamento Nodo Ingestion con stato: {state.selected_issue}, {state.issue_comments}, {state.issue_context}")
     pass

@@ -2,6 +2,7 @@
 
 from langchain_core.tools import tool
 from github import Auth, Github
+from github.GithubException import GithubException
  
 def create_github_client(token: str) -> Github:
         """Create an authenticated, read-only GitHub API client."""
@@ -16,6 +17,7 @@ def create_github_client(token: str) -> Github:
         )
 
 def build_github_tools(client, discovery_queries, limit):
+ 
     @tool
     def search_github_issues() -> list[dict]:
         """Find candidate GitHub issues using the configured search criteria.
@@ -91,7 +93,7 @@ def build_github_tools(client, discovery_queries, limit):
                   
 
     @tool
-    def get_repository_stats(repo_url: str):
+    def get_repository_stats(repository_full_name: str):
         """Retrieve read-only health metadata for a GitHub repository.
 
         Use this tool during discovery after an issue search to determine whether
@@ -99,8 +101,7 @@ def build_github_tools(client, discovery_queries, limit):
         clone the repository, modify it or inspect its local source code.
 
         Args:
-            repo_url: Canonical GitHub repository URL, for example
-                ``https://github.com/owner/project``.
+            repository_full_name: GitHub repository in ``owner/project`` format.
 
         Returns:
             Repository metadata such as full name, archived status, default
@@ -109,7 +110,37 @@ def build_github_tools(client, discovery_queries, limit):
             cannot be read.
         """
 
-        pass
+        repository_full_name = repository_full_name.strip()
+        if repository_full_name.count("/") != 1 or any(
+            not part for part in repository_full_name.split("/")
+        ):
+            return {"error": "repository_full_name non valido"}
+
+        try:
+            repository = client.get_repo(repository_full_name)
+            return {
+                "repository_full_name": repository.full_name,
+                "stars": repository.stargazers_count,
+                "forks": repository.forks_count,
+                "open_issues": repository.open_issues_count,
+                "archived": repository.archived,
+                "default_branch": repository.default_branch,
+                "last_pushed_at": (
+                    repository.pushed_at.isoformat()
+                    if repository.pushed_at
+                    else None
+                ),
+                "has_issues": repository.has_issues,
+                "license": (
+                    repository.license.spdx_id
+                    if repository.license
+                    else None
+                ),
+            }
+        except GithubException as exc:
+            return {
+                "error": f"Impossibile leggere la repository: {exc.data.get('message', str(exc))}"
+            }
 
 
     @tool
@@ -131,7 +162,79 @@ def build_github_tools(client, discovery_queries, limit):
             explanatory error dictionary when the repository or issue is missing
             or cannot be accessed.
         """
-        pass
+        repository_full_name = repository_full_name.strip()
+
+        if repository_full_name.count("/") != 1 or any(
+            not part for part in repository_full_name.split("/")
+        ):
+            return {
+                "error": "repository_full_name non valido"
+            }
+
+        if issue_number <= 0:
+            return {
+                "error": "issue_number deve essere positivo"
+            }
+
+        try:
+            repository = client.get_repo(repository_full_name)
+            issue = repository.get_issue(number=issue_number)
+
+            comments = []
+            for comment in issue.get_comments():
+                comments.append(
+                    {
+                        "author": (
+                            comment.user.login
+                            if comment.user
+                            else None
+                        ),
+                        "body": comment.body or "",
+                        "created_at": (
+                            comment.created_at.isoformat()
+                            if comment.created_at
+                            else None
+                        ),
+                        "updated_at": (
+                            comment.updated_at.isoformat()
+                            if comment.updated_at
+                            else None
+                        ),
+                    }
+                )
+
+            return {
+                "repository_full_name": repository.full_name,
+                "issue_number": issue.number,
+                "title": issue.title,
+                "body": issue.body or "",
+                "state": issue.state,
+                "html_url": issue.html_url,
+                "labels": [label.name for label in issue.labels],
+                "assignees": [
+                    assignee.login
+                    for assignee in issue.assignees
+                ],
+                "comments": comments,
+                "created_at": (
+                    issue.created_at.isoformat()
+                    if issue.created_at
+                    else None
+                ),
+                "updated_at": (
+                    issue.updated_at.isoformat()
+                    if issue.updated_at
+                    else None
+                ),
+            }
+        except GithubException as exc:
+            data = exc.data if isinstance(exc.data, dict) else {}
+            return {
+                "error": (
+                    "Impossibile leggere l'issue: "
+                    f"{data.get('message', str(exc))}"
+                )
+            }
     
     return {
         "search_github_issues": search_github_issues,
