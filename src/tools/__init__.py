@@ -8,7 +8,6 @@ and other external integrations.
 from langchain_core.tools.base import BaseTool
 
 from .ask_human import ask_human
-from .fs_read import fs_read_file
 
 ToolReference = str | BaseTool
 
@@ -21,7 +20,7 @@ triage_tools: list[ToolReference] = [
 ]
 
 ingestion_tools: list[ToolReference] = [
-    fs_read_file,
+    "clone_selected_repository",
 ]
 
 human_review_tools: list[ToolReference] = [

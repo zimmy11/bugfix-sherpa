@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-
 class RepositoryValidationError(ValueError):
     """Errore relativo alla validazione di un repository locale."""
 
@@ -24,7 +23,9 @@ _SCP_REMOTE_PATTERN = re.compile(
 )
 
 _WINDOWS_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
-
+_EXCLUDED_CHARS = ["..", "//", "@{", "\\","~" ,"^", ":", "?", "*", "["]
+_NO_FINAL_CHARS = [".", "/", " "]
+_CONTROL_CHARS = ["\n", "\r", "\n", "\x00", "\b", "\x1b"]
 
 def _run_git(repository: Path, *args: str) -> str:
     """
@@ -545,34 +546,48 @@ def is_safe_repository_entry(
 
 
 
-def validate_repository_full_name(value: str) -> tuple[str, str]: 
+_REPOSITORY_COMPONENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def validate_repository_full_name(value: str) -> tuple[str, str]:
+    """Validate and split a GitHub ``owner/repository`` identifier."""
     if not isinstance(value, str):
-        raise ValueError("Repository Full Name is not a string")
-    if (any(value == p for p in [".", "..", ""])) or (any(p in value for p in [ "\\", "://"])):
-        raise ValueError("Repository Full Name is not valid")
+        raise TypeError("repository_full_name deve essere una stringa")
+    if value != value.strip() or "\\" in value or "://" in value:
+        raise RepositoryValidationError(
+            "repository_full_name deve usare il formato owner/repository"
+        )
 
     parts = value.split("/")
+    if len(parts) != 2:
+        raise RepositoryValidationError(
+            "repository_full_name deve usare il formato owner/repository"
+        )
 
-    if len(parts) != 2: 
-        raise ValueError("Repository Full Name is weel formatted. It should have two strings separated by '/'")
     owner, repository = parts
+    if any(
+        component in {"", ".", ".."}
+        or not _REPOSITORY_COMPONENT_PATTERN.fullmatch(component)
+        for component in (owner, repository)
+    ):
+        raise RepositoryValidationError(
+            "repository_full_name contiene componenti non validi"
+        )
+
     return owner, repository
 
-def build_public_clone_url(repository_full_name: str) -> str:
-    fixed_prefix = "https://github.com/"
-    fixed_suffix = ".git"
-    sep = "/"
-    owner, repo = repository_full_name.split(sep = sep)
-    repository_url = fixed_prefix + owner + sep + repo + fixed_suffix
+def build_public_clone_url(owner: str, repo: str) -> str:
+    """Build a credential-free HTTPS clone URL from validated components."""
+    return f"https://github.com/{owner}/{repo}.git"
 
-    return repository_url
-
-def build_repository_workspace(workspace_root, owner, repo, issue_number):
-    if not isinstance(issue_number, str):
-        issue_number = str(issue_number)
-    sep = os.sep
-    path = workspace_root + sep + owner + sep + repo + sep + "issue-" + issue_number
-    return path
+def build_repository_workspace(
+    workspace_root: str | Path,
+    owner: str,
+    repo: str,
+    issue_number: int,
+) -> Path:
+    """Build the deterministic destination for one issue checkout."""
+    return Path(workspace_root) / owner / repo / f"issue-{issue_number}"
 
 def resolve_inside_workspace(workspace_root: str | Path, candidate_path: str | Path) -> Path: 
     absolute_path = Path(workspace_root).expanduser().resolve()
@@ -589,3 +604,32 @@ def resolve_inside_workspace(workspace_root: str | Path, candidate_path: str | P
         )
 
     return candidate
+
+def validate_issue_number(issue_number: object) -> int:
+    if (
+        not isinstance(issue_number, int)
+        or isinstance(issue_number, bool)
+        or issue_number <= 0
+    ):
+        raise RepositoryValidationError(
+            "issue_number deve essere un intero positivo"
+        )
+    return issue_number
+
+
+def validate_branch(default_branch: object) -> str:
+    if not isinstance(default_branch, str):
+        raise TypeError("default_branch deve essere una stringa")
+
+    if (
+        not default_branch
+        or default_branch != default_branch.strip()
+        or default_branch in {".", ".."}
+        or default_branch.startswith("-")
+        or default_branch.endswith((".", "/", ".lock"))
+        or any(part in default_branch for part in _EXCLUDED_CHARS)
+        or any(ord(char) < 32 or ord(char) == 127 for char in default_branch)
+    ):
+        raise RepositoryValidationError("default_branch non è valido")
+
+    return default_branch

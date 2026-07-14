@@ -50,19 +50,22 @@ class BugFixingState(BaseModel):
     triage_reason: Optional[str] = None
 
     # Repository locale e Ingestion
-    ingestion_status: Optional[Literal["pending", "cloning"]]
+    ingestion_status: Optional[Literal["pending", "cloning", "inspecting", "completed", "failed"]]
     ingestion_error: Optional[str] = None
+    ingestion_attempts: Optional[int] = None
+    ingestion_warnings: Optional[str] = None
     local_repo_path: Optional[str] = None
+    repository_remote_url: Optional[str] = None
     repository_revision: Optional[str] = None
     repository_tree: list[str] = Field(default_factory=list)
     repository_tree_truncated: bool = False
     repository_guides: dict[str, str] = Field(default_factory=dict)
-    project_manifests: dict[str, str] = None
+    project_manifests: Optional[dict[str, str]] = None
     project_language: Optional[str] = None
     package_manager: Optional[str] = None
-    python_version_constraint: Optional[str]
-    test_framework: Optional[str]
-    test_config_files: list[str]
+    python_version_constraint: Optional[str] = None
+    test_framework: Optional[str] = None
+    test_config_files: Optional[list[str]] = None
 
 
     # Investigation

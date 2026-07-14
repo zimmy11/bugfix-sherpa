@@ -14,6 +14,7 @@ from src.agent.nodes.investigation import node_investigation as investigation
 from src.agent.nodes.human_review import human_review_node as human_review
 from src.tools import tools
 from src.tools.github import build_github_tools
+from src.tools.repository import build_repository_tools
 from src.utils.config import Settings
 from langgraph.prebuilt import ToolNode
 from langgraph.types import RetryPolicy
@@ -88,15 +89,20 @@ class SherpaAgent:
                 self.settings.repository_inactivity_days
             ),
         )
+        repository_tools = build_repository_tools(self.settings)
+        configured_tools = {
+            **github_tools,
+            **repository_tools,
+        }
 
         discovery_tools = self._resolve_tool_group(
-            "discovery", github_tools
+            "discovery", configured_tools
         )
         triage_tools = self._resolve_tool_group(
-            "triage", github_tools
+            "triage", configured_tools
         )
         ingestion_tools = self._resolve_tool_group(
-            "ingestion", github_tools
+            "ingestion", configured_tools
         )
 
         discovery_llm = self.deps.discovery.bind_tools(discovery_tools)
@@ -111,7 +117,7 @@ class SherpaAgent:
         )
 
         graph.add_node("ingestion", partial(ingestion, llm=ingestion_llm, settings = self.settings))
-        graph.add_node("ingestion_tools", ToolNode(ingestion_tools))
+        graph.add_node("ingestion_tools", ToolNode(ingestion_tools), retry_policy=tool_retry_policy)
 
         graph.add_node("advisory", partial(advisor, llm=self.deps.advisory , settings = self.settings))
         

@@ -5,7 +5,7 @@ from typing import Optional, Literal
 
 
 class CloneRepositoryResult(BaseModel):
-    status: Literal["cloned", "reused", "failed"] = None
+    status: Literal["cloned", "reused", "failed"]
     repository_full_name: str 
     local_repo_path: Optional[str] = None
     remote_url: Optional[str] = None
@@ -23,6 +23,6 @@ class InspectRepositoryResult(BaseModel):
     package_manager: Optional[str] = None
     python_version_constraint: Optional[str] = None
     test_framework: Optional[str] = None
-    test_config_files: Optional[list[str]] = None
+    test_config_files: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     message: Optional[str] = None
