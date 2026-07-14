@@ -50,6 +50,13 @@ alcuna issue e restituisci `status: "rejected"`.
 Prima di valutare difficoltà, riproducibilità o preferenze, esamina per ogni
 candidate tutti i commenti, `timeline_events` e `work_claim_signals`.
 
+Non limitarti al nome tecnico dell'evento: interpretane il significato nel
+contesto. Eventi `referenced` con commit, `cross-referenced` con pull request o
+segnali equivalenti indicano che la issue è già stata lavorata o referenziata
+da una soluzione concreta; scartala anche se è ancora aperta, non assegnata e
+senza commenti espliciti. L'obiettivo è scegliere issue ancora prive di lavoro
+o riferimenti tecnici già avviati.
+
 Considera evidenza concreta di lavoro già iniziato:
 
 - una pull request collegata alla issue, in particolare se aperta, draft o

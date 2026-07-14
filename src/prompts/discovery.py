@@ -74,7 +74,6 @@ Restituisci esclusivamente un oggetto JSON con questa struttura:
       "title": "Titolo dell'issue",
       "labels": ["good first issue"],
       "assignees": [],
-      "body_excerpt": "Estratto breve della descrizione",
       "updated_at": "data restituita da GitHub",
       "repository_stats": {
         "repository_full_name": "owner/project",

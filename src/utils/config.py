@@ -31,9 +31,17 @@ class Settings(BaseModel):
     github_min_stars: int = 100
     repository_inactivity_days: int = 7
 
+    # Ingestion
     # Workspace locale
+    repository_clone_depth: int = 1
+    max_repositories_tree_entries: int = 1500
+    max_guide_chars: int = 20000
+    max_ingestion_total_chars: int = 80000
+    max_repository_file_bytes: int = 1000000
+    reuse_existing_clone: bool = True
     workspace_root: Path = Path("./workspace")
     max_repository_tree_depth: int = 4
+    repository_clone_timeout_seconds: int = 120
     max_file_chunk_lines: int = 200
     max_file_chunk_chars: int = 20_000
     max_search_results: int = 20

@@ -219,7 +219,6 @@ def build_github_tools(
                         "url": issue.html_url,
                         "labels": [item.name for item in issue.labels],
                         "assignees": [],
-                        "body_excerpt": issue.body[:1000],
                         "updated_at": issue.updated_at.isoformat(),
                         "repository_stats": {
                             "stars": repository.stargazers_count,

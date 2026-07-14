@@ -2,7 +2,7 @@ from __future__ import annotations
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field
-from typing import Annotated, Optional, Any
+from typing import Annotated, Optional, Any, Literal
 from operator import add
 
 class BugFixingState(BaseModel):
@@ -50,11 +50,20 @@ class BugFixingState(BaseModel):
     triage_reason: Optional[str] = None
 
     # Repository locale e Ingestion
+    ingestion_status: Optional[Literal["pending", "cloning"]]
+    ingestion_error: Optional[str] = None
     local_repo_path: Optional[str] = None
+    repository_revision: Optional[str] = None
     repository_tree: list[str] = Field(default_factory=list)
+    repository_tree_truncated: bool = False
     repository_guides: dict[str, str] = Field(default_factory=dict)
-    project_manifest: Optional[str] = None
+    project_manifests: dict[str, str] = None
     project_language: Optional[str] = None
+    package_manager: Optional[str] = None
+    python_version_constraint: Optional[str]
+    test_framework: Optional[str]
+    test_config_files: list[str]
+
 
     # Investigation
     files_analyzed: Annotated[list[str], add] = Field(
