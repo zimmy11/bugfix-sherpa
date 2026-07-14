@@ -40,8 +40,13 @@ def triage_node(
         for candidate in tool_result:
             if not isinstance(candidate, dict):
                 continue
-            
-            key = str(candidate['repository_full_name']) + '#' + str(candidate['issue_number'])
+
+            repository_full_name = candidate.get("repository_full_name")
+            issue_number = candidate.get("issue_number")
+            if not repository_full_name or issue_number is None:
+                continue
+
+            key = f"{repository_full_name}#{issue_number}"
             thread_by_key[key] = candidate
         break
 
@@ -54,6 +59,12 @@ def triage_node(
             thread = thread_by_key[candidate_key]
             enriched_candidate["body"] = thread.get("body", "")
             enriched_candidate["comments"] = thread.get("comments", [])
+            enriched_candidate["timeline_events"] = thread.get(
+                "timeline_events", []
+            )
+            enriched_candidate["work_claim_signals"] = thread.get(
+                "work_claim_signals", []
+            )
             enriched_candidate["issue_state"] = thread.get("state")
         enriched_candidates.append(enriched_candidate)
 
@@ -112,6 +123,7 @@ def triage_node(
     if selected_issue is None:
         return {
             "messages": [result],
+            "issue_candidates": enriched_candidates,
             "selected_issue": None,
             "triage_status": "rejected",
             "triage_reason": data.get("reason"),
@@ -159,6 +171,12 @@ def triage_node(
             comment.get("body", "")
             for comment in selected_thread.get("comments", [])
         ],
+        "issue_timeline_events": selected_thread.get(
+            "timeline_events", []
+        ),
+        "issue_work_claim_signals": selected_thread.get(
+            "work_claim_signals", []
+        ),
         "triage_status": data.get("status", "accepted"),
         "triage_reason": data.get("reason"),
         "current_node": "triage",

@@ -26,6 +26,12 @@ class BugFixingState(BaseModel):
     issue_title: Optional[str] = None
     issue_body: Optional[str] = None
     issue_comments: list[str] = Field(default_factory=list)
+    issue_timeline_events: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    issue_work_claim_signals: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
     selected_issue: Optional[dict[str, Any]] = None
 
     # Risultati Discovery

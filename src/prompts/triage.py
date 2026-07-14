@@ -14,7 +14,7 @@ nell'ultimo messaggio ricevuto:
 
 - se è già presente il risultato di `read_issue_thread`;
 - oppure se le candidate contengono già i dettagli completi, inclusi almeno
-  `body`, `comments`, `issue_state`;
+  `body`, `comments`, `timeline_events`, `work_claim_signals`, `issue_state`;
 
 allora considera il tool già eseguito, non chiamarlo nuovamente e procedi con
 la valutazione.
@@ -33,6 +33,8 @@ Dopo aver ottenuto i dati, analizza per ogni candidate:
 - stato corrente;
 - label e assegnatari;
 - commenti pubblici in ordine cronologico;
+- eventi della timeline, inclusi commit e pull request collegate;
+- segnali normalizzati presenti in `work_claim_signals`;
 - eventuali istruzioni o decisioni dei maintainer;
 - dettagli di riproduzione;
 - soluzioni già proposte o tentate;
@@ -42,6 +44,27 @@ Dopo aver ottenuto i dati, analizza per ogni candidate:
 Se il tool è necessario ma fallisce completamente, oppure i dati disponibili
 non permettono una valutazione sufficientemente affidabile, non selezionare
 alcuna issue e restituisci `status: "rejected"`.
+
+## Controllo obbligatorio della presa in carico
+
+Prima di valutare difficoltà, riproducibilità o preferenze, esamina per ogni
+candidate tutti i commenti, `timeline_events` e `work_claim_signals`.
+
+Considera evidenza concreta di lavoro già iniziato:
+
+- una pull request collegata alla issue, in particolare se aperta, draft o
+  destinata a chiuderla;
+- un commit recente che cita la issue e descrive una correzione pertinente;
+- una richiesta di assegnazione o un'assegnazione;
+- un commento umano che annuncia un'investigazione, una patch, un branch o una
+  pull request;
+- aggiornamenti che mostrano implementazione già in corso.
+
+Una candidate con evidenza concreta di lavoro già iniziato è NON AMMISSIBILE,
+anche se non ha assegnatari e soddisfa tutti gli altri criteri. Gli eventi di
+tipo `labeled`, `renamed` o `milestoned` non rappresentano da soli una presa in
+carico. Non interpretare semplici domande, proposte teoriche o messaggi di bot
+come lavoro già iniziato. In caso di dubbio significativo, scarta la issue.
 
 ## Criteri di ammissibilità
 
@@ -84,6 +107,7 @@ In generale, escludi una candidate se riguarda principalmente:
   informale, come "I'm working on this", "I'd like to work on this", richieste
   di assegnazione o espressioni equivalenti. Non considerare semplici domande,
   proposte teoriche o messaggi automatici dei bot come prese in carico;
+- issue con commit pertinenti o pull request collegate rilevati nella timeline;
 - richieste ambigue che richiedono prima una definizione di prodotto.
 
 Non considerare automaticamente semplice o adatta una issue soltanto perché

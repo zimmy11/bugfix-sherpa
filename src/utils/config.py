@@ -171,7 +171,7 @@ def load_settings() -> Settings:
         ),
         github_labels=labels,
         github_max_results=int(
-            os.getenv("GITHUB_MAX_RESULTS", "20")
+            os.getenv("GITHUB_MAX_RESULTS", "10")
         ),
         github_min_stars=int(
             os.getenv("GITHUB_MIN_STARS", "100")
