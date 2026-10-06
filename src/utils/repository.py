@@ -6,10 +6,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-
 from git import Repo
 from git.exc import GitCommandError as GitPythonCommandError
-
+from utils.clone_worker import clone_into_temporary_directory
 from src.agent.schema import CloneRepositoryResult
 from src.utils.config import Settings
 from src.utils.repository_safety import (
@@ -26,7 +25,6 @@ from src.utils.repository_safety import (
 
 
 _TEMP_DIRECTORY_PREFIX = ".bugfix-sherpa-clone-"
-
 
 @dataclass(frozen=True)
 class CheckoutMetadata:
@@ -105,46 +103,6 @@ def can_reuse_checkout(
         metadata.branch == expected_branch
         and not metadata.is_dirty
         and not metadata.has_in_progress_operation
-    )
-
-
-def clone_into_temporary_directory(
-    url: str,
-    temp_path: str | Path,
-    branch: str,
-    depth: int,
-    timeout_seconds: int,
-) -> Repo:
-    """Clone one branch into an empty, caller-owned temporary directory."""
-    destination = Path(temp_path)
-    if not destination.is_dir() or any(destination.iterdir()):
-        raise RepositoryValidationError(
-            "La directory temporanea del clone deve esistere ed essere vuota"
-        )
-    if depth <= 0 or timeout_seconds <= 0:
-        raise RepositoryValidationError(
-            "Profondità e timeout del clone devono essere positivi"
-        )
-
-    clone_options: dict[str, object] = {
-        "branch": branch,
-        "depth": depth,
-        "single_branch": True,
-        "recurse_submodules": False,
-    }
-    # GitPython cannot enforce kill_after_timeout on Windows. The temporary
-    # checkout still prevents an interrupted clone from corrupting the final
-    # destination; a process-level sandbox can enforce the hard Windows limit.
-    if os.name != "nt":
-        clone_options["kill_after_timeout"] = timeout_seconds
-
-    return Repo.clone_from(
-        url,
-        destination,
-        env={"GIT_TERMINAL_PROMPT": "0"},
-        allow_unsafe_protocols=False,
-        allow_unsafe_options=False,
-        **clone_options,
     )
 
 
@@ -351,4 +309,44 @@ def clone_repository_service(
                 temp_path,
                 destination_parent,
             )
+
+
+def clone_into_temporary_directory(
+    url: str,
+    temp_path: str | Path,
+    branch: str,
+    depth: int,
+    timeout_seconds: int,
+) -> Repo:
+    """Clone one branch into an empty, caller-owned temporary directory."""
+    destination = Path(temp_path)
+    if not destination.is_dir() or any(destination.iterdir()):
+        raise RepositoryValidationError(
+            "La directory temporanea del clone deve esistere ed essere vuota"
+        )
+    if depth <= 0 or timeout_seconds <= 0:
+        raise RepositoryValidationError(
+            "Profondità e timeout del clone devono essere positivi"
+        )
+
+    clone_options: dict[str, object] = {
+        "branch": branch,
+        "depth": depth,
+        "single_branch": True,
+        "recurse_submodules": False,
+    }
+    # GitPython cannot enforce kill_after_timeout on Windows. The temporary
+    # checkout still prevents an interrupted clone from corrupting the final
+    # destination; a process-level sandbox can enforce the hard Windows limit.
+    if os.name != "nt":
+        clone_options["kill_after_timeout"] = timeout_seconds
+
+    return Repo.clone_from(
+        url,
+        destination,
+        env={"GIT_TERMINAL_PROMPT": "0"},
+        allow_unsafe_protocols=False,
+        allow_unsafe_options=False,
+        **clone_options,
+    )
 

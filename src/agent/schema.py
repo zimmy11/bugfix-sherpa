@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
-
+from dataclasses import dataclass
 
 
 class CloneRepositoryResult(BaseModel):
@@ -26,3 +26,25 @@ class InspectRepositoryResult(BaseModel):
     test_config_files: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     message: Optional[str] = None
+
+@dataclass(frozen=True)
+class CloneWorkerRequest:
+    url: str
+    branch: str
+    destination: str
+    depth: int
+
+
+@dataclass(frozen=True)
+class CloneWorkerResult:
+    status: Literal["success", "git_error", "worker_error"]
+    message: str = ""
+    command: str | None = None
+    stderr: str | None = None
+
+
+@dataclass
+class WorkerHandle:
+    process: object
+    result_queue: object
+    job_handle: int | None = None
