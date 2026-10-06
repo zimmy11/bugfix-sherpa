@@ -1,8 +1,7 @@
 import json
-
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-
+from src.agent.schema import TriageDecision
 from src.agent.state import BugFixingState
 from src.prompts.triage import TRIAGE_SYSTEM_PROMPT as SYSTEM_PROMPT
 from src.utils.config import Settings
@@ -53,8 +52,8 @@ def triage_node(
 
     enriched_candidates = []
     for candidate in state.issue_candidates:
-        enriched_candidate = dict(candidate)
-        candidate_key = str(candidate["repository_full_name"]) + "#" + str(candidate["issue_number"])
+        enriched_candidate = candidate.model_dump(mode="json")
+        candidate_key = f"{candidate.repository_full_name}#{candidate.issue_number}"
         if candidate_key in thread_by_key:
             thread = thread_by_key[candidate_key]
             enriched_candidate["body"] = thread.get("body", "")
@@ -107,7 +106,6 @@ def triage_node(
     if result.tool_calls:
         return {
             "messages": [result],
-            "issue_candidates": enriched_candidates,
             "current_node": "triage",
         }
 
@@ -117,67 +115,69 @@ def triage_node(
         )
 
     response_text = result.content[0]["text"] if isinstance(result.content, list) else result.content
-    data = json.loads(response_text)
-    selected_issue = data.get("selected_issue")
+    decision = TriageDecision.model_validate_json(response_text)
 
-    if selected_issue is None:
+    if decision.status == "rejected":
         return {
             "messages": [result],
-            "issue_candidates": enriched_candidates,
             "selected_issue": None,
-            "triage_status": "rejected",
-            "triage_reason": data.get("reason"),
+            "issue_number": None,
+            "issue_url": None,
+            "issue_title": None,
+            "issue_body": None,
+            "issue_comments": [],
+            "issue_timeline_events": [],
+            "issue_work_claim_signals": [],
+            "repository_full_name": None,
+            "repository_stats": None,
+            "default_branch": None,
+            "triage_status": decision.status,
+            "triage_reason": decision.reason,
             "current_node": "triage",
         }
 
-    selected_key = (
-        f"{selected_issue['repository_full_name']}#"
-        f"{selected_issue['issue_number']}"
-    )
-    selected_thread = thread_by_key.get(selected_key, {})
     selected_candidate = next(
-    (
-        candidate
-        for candidate in enriched_candidates
-        if (
-            f"{candidate['repository_full_name']}#"
-            f"{candidate['issue_number']}"
-        ) == selected_key
-    ),
-    None,
+        (
+            candidate
+            for candidate in state.issue_candidates
+            if (
+                f"{candidate.repository_full_name}#{candidate.issue_number}"
+            ) == decision.issue_key
+        ),
+        None,
     )
+
     if selected_candidate is None:
         raise ValueError(
             "L'LLM ha selezionato una issue non presente nelle candidate"
-            )
+        )
 
-    repository_stats = selected_candidate.get("repository_stats", {})
-    default_branch = repository_stats.get("default_branch")
+    selected_thread = thread_by_key.get(decision.issue_key)
+
+    if not selected_thread or selected_thread.get("error"):
+        raise ValueError(
+            "Thread della issue selezionata non disponibile"
+        )
 
     return {
         "messages": [result],
-        "issue_candidates": enriched_candidates,
-        "selected_issue": selected_issue,
-        "issue_number": selected_issue["issue_number"],
-        "issue_url": selected_issue.get("url"),
-        "issue_title": selected_issue.get("title"),
-        "repository_full_name": selected_issue[
-            "repository_full_name"
-        ],
-        "repository_stats": repository_stats,
-        "default_branch": default_branch,
-        "issue_body": selected_thread.get("body"),
+        "selected_issue": selected_candidate,
+        "issue_number": selected_candidate.issue_number,
+        "issue_url": selected_candidate.url,
+        "issue_title": selected_candidate.title,
+        "repository_full_name": selected_candidate.repository_full_name,
+        "repository_stats": selected_candidate.repository_stats,
+        "default_branch": selected_candidate.repository_stats.default_branch,
+        "issue_body": selected_thread.get("body", ""),
         "issue_comments": [
             comment.get("body", "")
             for comment in selected_thread.get("comments", [])
         ],
-        "issue_timeline_events": selected_thread.get(
-            "timeline_events", []
-        ),
+        "issue_timeline_events": selected_thread.get("timeline_events", []),
         "issue_work_claim_signals": selected_thread.get(
             "work_claim_signals", []
         ),
-        "triage_status": data.get("status", "accepted"),
-        "triage_reason": data.get("reason"),
+        "triage_status": decision.status,
+        "triage_reason": decision.reason,
         "current_node": "triage",
     }

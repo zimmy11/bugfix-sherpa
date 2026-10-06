@@ -148,6 +148,7 @@ class SherpaAgent:
             {
                 "tools": "ingestion_tools",
                 "completed": "investigation",
+                "failed": END,
             },
         )
         graph.add_edge("ingestion_tools", "ingestion")

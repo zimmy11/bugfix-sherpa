@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from git import Repo
 from git.exc import GitCommandError as GitPythonCommandError
-from utils.clone_worker import clone_into_temporary_directory
+# from utils.clone_worker import clone_into_temporary_directory
 from src.agent.schema import CloneRepositoryResult
 from src.utils.config import Settings
 from src.utils.repository_safety import (

@@ -147,13 +147,8 @@ Se selezioni una issue:
 
 {
   "status": "accepted",
-  "selected_issue": {
-    "repository_full_name": "owner/project",
-    "issue_number": 123,
-    "title": "Titolo originale",
-    "url": "https://github.com/owner/project/issues/123"
-  },
-  "reason": "Motivazione sintetica basata sui criteri di triage e sul thread"
+  "reason": "Motivazione basata sul thread",
+  "issue_key": "owner/project#123"
 }
 
 Se nessuna issue è adatta:
@@ -161,13 +156,13 @@ Se nessuna issue è adatta:
 {
   "status": "rejected",
   "selected_issue": null,
-  "reason": "Motivazione sintetica del rifiuto"
+  "reason": "Nessuna candidata soddisfa i criteri"
 }
 
 ## Vincoli finali
 
 - seleziona al massimo una issue;
-- `selected_issue` deve corrispondere a una delle candidate ricevute;
+- issue_key deve identificare una candidata ricevuta, nel formato repository_full_name#issue_number;
 - non inventare repository, numeri, titoli o URL;
 - non richiamare `read_issue_thread` se il suo risultato è già disponibile;
 - non produrre il JSON finale se il tool è ancora necessario;

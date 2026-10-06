@@ -1,9 +1,9 @@
 from __future__ import annotations
-from multiprocessing.context import Pipe, Process, spawn, Event, join, is_alive, exitcode
-
+from multiprocessing import Process, Pipe, Event
 from git import Repo
-from src.utils.repository import RepositoryValidationError
+from src.utils.repository_safety import RepositoryValidationError
 
+# use join, is_alive, exitcode
 
 _EXCLUDED_DIRECTORIES = [".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", "node_modules", "build", "dist", "coverage"]
 _SENSITIVE_FILE_PATTERNS = [".env", ".env.*", "*.pem", "*.key", "id_rsa*", "credentials*", "secrets*"]
