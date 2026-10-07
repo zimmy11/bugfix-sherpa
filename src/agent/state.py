@@ -20,7 +20,7 @@ class BugFixingState(BaseModel):
     github_query: Optional[list[str]] = None
     labels: list[str] = Field(default_factory=list)
     language: Optional[str] = None
-    max_results: int = 10
+    max_results: int = Field(default=10, ge=1, le=100)
 
     # Issue selezionata
     issue_number: Optional[int] = None
@@ -54,7 +54,7 @@ class BugFixingState(BaseModel):
     # Repository locale e Ingestion
     ingestion_status: Literal["pending", "cloning", "inspecting", "completed", "failed"] = "pending"
     ingestion_error: Optional[str] = None
-    ingestion_attempts: int = 0
+    ingestion_attempts: int = Field(default=0, ge=0)
     ingestion_warnings: list[str] = Field(default_factory=list)
     local_repo_path: Optional[str] = None
     repository_remote_url: Optional[str] = None
@@ -119,7 +119,7 @@ class BugFixingState(BaseModel):
     current_node: Optional[str] = None
     status: str = "initialized"
     error_message: Optional[str] = None
-    retry_count: int = 0
+    retry_count: int = Field(default=0, ge=0)
 
 def validate_selected_issue(state: BugFixingState) -> IssueCandidate:
     if state.triage_status != "accepted" or state.selected_issue is None:

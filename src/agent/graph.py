@@ -77,7 +77,7 @@ class SherpaAgent:
             initial_interval=self.settings.api_retry_min_seconds,
             backoff_factor=2.0,
             max_interval=self.settings.api_retry_max_seconds,
-            max_attempts=3,
+            max_attempts=self.settings.api_max_retries,
             jitter=True,
         )
         github_tools = build_github_tools(

@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, StringConstraints
+from typing import Optional, Annotated
+
+NonEmptyStr = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1)
+]
 
 
 class Settings(BaseModel):
@@ -19,7 +25,7 @@ class Settings(BaseModel):
     advisory_model: str = "gemini-3.1-pro"
 
     # Discovery
-    github_queries: list[str] = None
+    github_queries: Optional[list[NonEmptyStr]] = Field(default=None, min_length=1)
     github_language: str = "python"
     github_labels: list[str] = Field(
         default_factory=lambda: [
@@ -29,30 +35,30 @@ class Settings(BaseModel):
     )
     github_max_results: int = 30
     github_min_stars: int = 100
-    repository_inactivity_days: int = 7
+    repository_inactivity_days: int = Field(default = 7, gt=0)
 
     # Ingestion
     # Workspace locale
-    repository_clone_depth: int = 1
-    max_repositories_tree_entries: int = 1500
-    max_guide_chars: int = 20000
-    max_ingestion_total_chars: int = 80000
-    max_repository_file_bytes: int = 1000000
+    repository_clone_depth: int = Field(default=1, gt=0)
+    max_repository_tree_entries: int = Field(default=1500, gt=0)
+    max_guide_chars: int = Field(default=20000, gt=0)
+    max_ingestion_total_chars: int = Field(default=80000, gt=0)
+    max_repository_file_bytes: int = Field(default=1000000, gt = 0)
     reuse_existing_clone: bool = True
     workspace_root: Path = Path("./workspace")
-    max_repository_tree_depth: int = 4
-    repository_clone_timeout_seconds: int = 120
-    max_file_chunk_lines: int = 200
-    max_file_chunk_chars: int = 20_000
-    max_search_results: int = 20
+    max_repository_tree_depth: int = Field(default=4, gt=0)
+    repository_clone_timeout_seconds: int = Field(default=120, gt=0)
+    max_file_chunk_lines: int = Field(default=200, gt = 0)
+    max_file_chunk_chars: int = Field(default=20000, gt=0)
+    max_search_results: int = Field(default=20, gt=0)
 
     # Resilienza
-    api_max_retries: int = 3
-    api_retry_min_seconds: int = 2
-    api_retry_max_seconds: int = 30
+    api_max_retries: int = Field(default=3, gt=0)
+    api_retry_min_seconds: int = Field(default=2, gt=0)
+    api_retry_max_seconds: int = Field(default=30, gt=0)
 
     # Test sandboxati
-    test_timeout_seconds: int = 300
+    test_timeout_seconds: int = Field(default=300, gt=0)
     sandbox_network_enabled: bool = False
 
     # Osservabilità
@@ -76,6 +82,11 @@ class Settings(BaseModel):
         ) for label in self.github_labels]
         return self
 
+    @model_validator(mode = "after")
+    def validate_api_retry_range(self):
+        if self.api_retry_min_seconds <= self.api_retry_max_seconds:
+            return self
+        raise ValueError("api_retry_min_seconds cannot be greater that api_retry_max_seconds")
 
     @field_validator("github_token", "google_api_key")
     @classmethod
@@ -179,7 +190,7 @@ def load_settings() -> Settings:
         ),
         github_labels=labels,
         github_max_results=int(
-            os.getenv("GITHUB_MAX_RESULTS", "10")
+            os.getenv("GITHUB_MAX_RESULTS", "30")
         ),
         github_min_stars=int(
             os.getenv("GITHUB_MIN_STARS", "100")
@@ -193,6 +204,36 @@ def load_settings() -> Settings:
 
         workspace_root=Path(
             os.getenv("WORKSPACE_ROOT", "./workspace")
+        ),
+        repository_clone_depth=int(
+            os.getenv("REPOSITORY_CLONE_DEPTH", "1")
+        ),
+        repository_clone_timeout_seconds=int(
+            os.getenv("REPOSITORY_CLONE_TIMEOUT_SECONDS", "120")
+        ),
+        max_repository_tree_depth=int(
+            os.getenv("MAX_REPOSITORY_TREE_DEPTH", "4")
+        ),
+        max_repository_tree_entries=int(
+            os.getenv("MAX_REPOSITORY_TREE_ENTRIES", "1500")
+        ),
+        max_repository_file_bytes=int(
+            os.getenv("MAX_REPOSITORY_FILE_BYTES", "1000000")
+        ),
+        max_guide_chars=int(
+            os.getenv("MAX_GUIDE_CHARS", "20000")
+        ),
+        max_ingestion_total_chars=int(
+            os.getenv("MAX_INGESTION_TOTAL_CHARS", "80000")
+        ),
+        max_file_chunk_lines=int(
+            os.getenv("MAX_FILE_CHUNK_LINES", "200")
+        ),
+        max_file_chunk_chars=int(
+            os.getenv("MAX_FILE_CHUNK_CHARS", "20000")
+        ),
+        max_search_results=int(
+            os.getenv("MAX_SEARCH_RESULTS", "20")
         ),
 
         api_max_retries=int(
