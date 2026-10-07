@@ -5,6 +5,7 @@ import pytest
 from src.agent.router import route_after_ingestion, route_after_triage
 from src.agent.schema import IssueCandidate, RepositoryStats
 from src.agent.state import BugFixingState
+from src.utils.config import Settings
 
 
 def _accepted_issue_state() -> BugFixingState:
@@ -42,13 +43,19 @@ def test_triage_rejects_url_different_from_candidate() -> None:
         route_after_triage(state)
 
 
-def test_ingestion_rejects_completed_snapshot_without_sha() -> None:
+def test_ingestion_rejects_completed_snapshot_without_sha(tmp_path) -> None:
     state = _accepted_issue_state()
     state.ingestion_status = "completed"
+    state.inspection_status = "completed"
     state.local_repo_path = "C:/workspace/owner/project"
     state.repository_remote_url = "https://github.com/owner/project.git"
     state.test_config_files = []
     state.repository_revision = None
+    settings = Settings(
+        github_token="fake",
+        google_api_key="fake",
+        workspace_root=tmp_path,
+    )
 
     with pytest.raises(ValueError, match="SHA del checkout mancante"):
-        route_after_ingestion(state)
+        route_after_ingestion(state, settings=settings)

@@ -133,7 +133,7 @@ class SherpaAgent:
 
 
         graph.add_edge(START, "discovery")
-        graph.add_conditional_edges("discovery", route_after_discovery, {"tools": "discovery_tools", "completed": "triage"})
+        graph.add_conditional_edges("discovery", route_after_discovery, {"tools": "discovery_tools", "completed": "triage", "no_results": END, "failed": END})
         graph.add_edge("discovery_tools", "discovery")
         graph.add_conditional_edges("triage", route_after_triage,
         {
@@ -144,7 +144,7 @@ class SherpaAgent:
         graph.add_edge("triage_tools", "triage")
         graph.add_conditional_edges(
             "ingestion",
-            route_after_ingestion,
+            partial(route_after_ingestion, settings = self.settings),
             {
                 "tools": "ingestion_tools",
                 "completed": "investigation",

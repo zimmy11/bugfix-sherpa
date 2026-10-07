@@ -1,7 +1,6 @@
 .env*
 *.md
 *.MD
-!ROADMAP_IMPLEMENTAZIONE.md
 .venv/
 __pycache__/
 src/bugfix*

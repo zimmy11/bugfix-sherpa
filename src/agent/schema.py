@@ -2,11 +2,33 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Literal
 from dataclasses import dataclass
+from pathlib import Path
+
+from src.utils.repository_safety import validate_branch
+
+INSPECTION_SECTIONS = frozenset({
+    "tree", "guides", "manifests", "test_config"
+})
+
+
+def validate_relative_snapshot_path(path: str) -> str:
+    """Require a canonical, relative POSIX path in an inspection snapshot."""
+    if (
+        not isinstance(path, str)
+        or not path
+        or path.startswith("/")
+        or "\\" in path
+        or ":" in path
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
+    ):
+        raise ValueError(f"Path relativo dello snapshot non valido: {path!r}")
+    return path
 
 
 class CloneRepositoryResult(BaseModel):
     status: Literal["cloned", "reused", "failed"]
-    repository_full_name: str 
+    repository_full_name: str
     local_repo_path: Optional[str] = None
     remote_url: Optional[str] = None
     default_branch: Optional[str] = None
@@ -17,6 +39,12 @@ class InspectRepositoryResult(BaseModel):
     status: Literal["completed", "partial", "failed"]
     repository_tree: list[str] =  Field(default_factory=list)
     repository_tree_truncated: bool = False
+    truncated_files: list[str] = Field(default_factory=list)
+    repository_path: Optional[str] = None
+    inspected_commit_sha: Optional[str] = Field(
+        default=None, pattern=r"^[0-9a-fA-F]{40}$"
+    )
+    inspected_branch: Optional[str] = None
     repository_guides: dict[str, str] = Field(default_factory=dict)
     project_manifests: dict[str, str] = Field(default_factory=dict)
     project_language: Optional[str] = None
@@ -26,6 +54,70 @@ class InspectRepositoryResult(BaseModel):
     test_config_files: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     message: Optional[str] = None
+    inspected_sections: list[Literal["tree", "guides", "manifests", "test_config"]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_inspected_fields(self) -> InspectRepositoryResult:
+        sections = set(self.inspected_sections)
+        if len(sections) != len(self.inspected_sections):
+            raise ValueError("Ci sono sezioni duplicate tra quelle ispezionate")
+        if len(set(self.repository_tree)) != len(self.repository_tree):
+            raise ValueError("L'albero contiene path duplicati")
+        if len(set(self.test_config_files)) != len(self.test_config_files):
+            raise ValueError("I file di configurazione dei test sono duplicati")
+        if len(set(self.truncated_files)) != len(self.truncated_files):
+            raise ValueError("I file troncati sono duplicati")
+        for path in (
+            *self.repository_tree,
+            *self.repository_guides,
+            *self.project_manifests,
+            *self.test_config_files,
+            *self.truncated_files,
+        ):
+            validate_relative_snapshot_path(path)
+        for section, has_data in (
+            ("tree", bool(self.repository_tree)),
+            ("guides", bool(self.repository_guides)),
+            ("manifests", bool(self.project_manifests)),
+            ("test_config", bool(self.test_config_files)),
+        ):
+            if has_data and section not in sections:
+                raise ValueError(f"Dati presenti per sezione non ispezionata: {section}")
+        if not set(self.truncated_files).issubset(
+            self.repository_guides.keys() | self.project_manifests.keys()
+        ):
+            raise ValueError("Un file troncato non è presente nello snapshot")
+        warnings_present = any(warning.strip() for warning in self.warnings)
+        if self.repository_tree_truncated:
+            if "tree" not in sections or not warnings_present:
+                raise ValueError("Albero troncato senza scansione e warning")
+        if self.truncated_files and not warnings_present:
+            raise ValueError("File troncati senza warning")
+        if self.status == "failed":
+            return self
+
+        if self.status in ("partial", "completed"):
+            if not self.repository_path or not self.repository_path.strip():
+                raise ValueError("L'ispezione richiede il path del checkout")
+            if not Path(self.repository_path).is_absolute():
+                raise ValueError("Il path ispezionato deve essere assoluto")
+            if not self.inspected_commit_sha:
+                raise ValueError("L'ispezione richiede lo SHA del checkout")
+            if not self.inspected_branch:
+                raise ValueError("L'ispezione richiede il branch del checkout")
+            validate_branch(self.inspected_branch)
+        if self.status == "partial":
+            if not sections:
+                raise ValueError("Status è partial ma la lista delle sezioni ispezionate è vuota")
+            if not warnings_present:
+                raise ValueError("Status è partial ma la lista dei warnings è vuota")
+        if self.status == "completed":
+            if sections != INSPECTION_SECTIONS:
+                raise ValueError("Ispezione completed senza tutte le sezioni")
+            if self.repository_tree_truncated or self.truncated_files:
+                raise ValueError("Ispezione completed non può essere troncata")
+
+        return self
 
 class RepositoryStats(BaseModel):
     stars: int = Field(ge=0)
