@@ -5,8 +5,9 @@ from src.utils.config import Settings
 from src.agent.state import BugFixingState
 from src.prompts.discovery import DISCOVERY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from langchain_core.messages import SystemMessage, ToolMessage
-from src.agent.schema import IssueCandidate
-import json 
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError
+import json
+from src.agent.errors import WorkflowFailure, invoke_with_retry
 
 
 def _latest_search_result(messages: list) -> ToolMessage | None:
@@ -16,14 +17,24 @@ def _latest_search_result(messages: list) -> ToolMessage | None:
     return None
 
 
-def _failed_update(response, reason: str) -> dict:
+def _outcome_update(response, outcome: DiscoveryOutcome) -> dict:
     return {
-        "messages": [response],
-        "issue_candidates": [],
-        "discovery_status": "failed",
-        "discovery_error": reason,
+        "messages": [response] if response is not None else [],
+        "issue_candidates": outcome.candidates,
+        "discovery_status": outcome.status,
+        "status": "failed" if outcome.status == "failed" else "completed" if outcome.status == "no_results" else "running",
+        "workflow_error": outcome.error,
         "current_node": "discovery",
     }
+
+
+def _failed_update(response, reason: str, category: str, *, retryable: bool = False) -> dict:
+    return _outcome_update(response, DiscoveryOutcome(
+        status="failed",
+        error=WorkflowError(
+            phase="discovery", message=reason, category=category, retryable=retryable,
+        ),
+    ))
 
 
 def discovery_node(
@@ -32,19 +43,26 @@ def discovery_node(
     settings: Settings,
 ) -> dict:
     """Accept only validated search results before routing to Triage."""
-    response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state.messages])
+    try:
+        response = invoke_with_retry(
+            lambda: llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state.messages]),
+            "discovery", settings,
+        )
+    except WorkflowFailure as exc:
+        return _outcome_update(None, DiscoveryOutcome(status="failed", error=exc.error))
 
     if getattr(response, "tool_calls", None):
         return {
             "messages": [response],
             "discovery_status": "pending",
-            "discovery_error": None,
+            "status": "running",
+            "workflow_error": None,
             "current_node": "discovery",
         }
 
     tool_message = _latest_search_result(state.messages)
     if tool_message is None:
-        return _failed_update(response, "Discovery non ha ricevuto risultati dal tool GitHub")
+        return _failed_update(response, "Discovery non ha ricevuto risultati dal tool GitHub", category="invariant_violation")
 
     try:
         result = (
@@ -53,15 +71,15 @@ def discovery_node(
             else tool_message.content
         )
     except (TypeError, ValueError):
-        return _failed_update(response, "Risposta JSON del tool Discovery non valida")
+        return _failed_update(response, "Risposta JSON del tool Discovery non valida", category="invariant_violation")
 
     if not isinstance(result, dict):
-        return _failed_update(response, "Risposta del tool Discovery non valida")
+        return _failed_update(response, "Risposta del tool Discovery non valida", category="invariant_violation")
 
     tool_status = result.get("status")
     raw_candidates = result.get("candidates")
     if not isinstance(raw_candidates, list):
-        return _failed_update(response, "Candidate Discovery mancanti o non valide")
+        return _failed_update(response, "Candidate Discovery mancanti o non valide", category="invariant_violation")
 
     candidates: dict[tuple[str, int], IssueCandidate] = {}
     try:
@@ -72,33 +90,25 @@ def discovery_node(
             if len(candidates) >= settings.github_max_results:
                 break
     except ValidationError:
-        return _failed_update(response, "Candidata Discovery non valida")
+        return _failed_update(response, "Candidata Discovery non valida", category="invariant_violation")
 
     candidate_list = list(candidates.values())
-    update = {
-        "messages": [response],
-        "issue_candidates": candidate_list,
-        "discovery_error": None,
-        "current_node": "discovery",
-    }
-
+    error = None
     if tool_status in {"completed", "partial_results"}:
-        if not candidate_list:
-            return _failed_update(response, "Ricerca completata senza candidate")
-        update["discovery_status"] = "completed"
+        status = "completed"
     elif tool_status == "no_results":
-        if candidate_list:
-            return _failed_update(response, "Risultato Discovery incoerente")
-        update["discovery_status"] = "no_results"
+        status = "no_results"
     elif tool_status in {"rate_limited", "partial_rate_limited"}:
-        update["discovery_status"] = "failed"
-        message = result.get("message")
-        update["discovery_error"] = (
-            message.strip()[:500]
-            if isinstance(message, str) and message.strip()
-            else "Ricerca GitHub interrotta per limite di quota"
+        status = "failed"
+        error = WorkflowError(
+            phase="discovery", message="Ricerca GitHub interrotta per limite di quota",
+            category="operational", retryable=True,
         )
     else:
-        return _failed_update(response, "Stato del tool Discovery sconosciuto")
+        return _failed_update(response, "Stato del tool Discovery sconosciuto", "invariant_violation")
 
-    return update
+    try:
+        outcome = DiscoveryOutcome(status=status, candidates=candidate_list, error=error)
+    except ValidationError:
+        return _failed_update(response, "Esito Discovery incoerente", "invariant_violation")
+    return _outcome_update(response, outcome)

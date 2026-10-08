@@ -16,8 +16,8 @@ from src.tools import tools
 from src.tools.github import build_github_tools
 from src.tools.repository import build_repository_tools
 from src.utils.config import Settings
+from src.agent.errors import guarded_tool, phase_boundary
 from langgraph.prebuilt import ToolNode
-from langgraph.types import RetryPolicy
 from github import Github
 from langchain_core.tools import BaseTool
 from src.agent.router import (
@@ -73,13 +73,6 @@ class SherpaAgent:
 
 
         graph = StateGraph(BugFixingState)
-        tool_retry_policy = RetryPolicy(
-            initial_interval=self.settings.api_retry_min_seconds,
-            backoff_factor=2.0,
-            max_interval=self.settings.api_retry_max_seconds,
-            max_attempts=self.settings.api_max_retries,
-            jitter=True,
-        )
         github_tools = build_github_tools(
             self.github_client,
             discovery_queries=self.settings.github_queries,
@@ -105,43 +98,48 @@ class SherpaAgent:
             "ingestion", configured_tools
         )
 
+        discovery_tools = [guarded_tool(tool, "discovery", self.settings) for tool in discovery_tools]
+        triage_tools = [guarded_tool(tool, "triage", self.settings) for tool in triage_tools]
+        ingestion_tools = [guarded_tool(tool, "ingestion", self.settings) for tool in ingestion_tools]
+
         discovery_llm = self.deps.discovery.bind_tools(discovery_tools)
         ingestion_llm = self.deps.ingestion.bind_tools(ingestion_tools)
         triage_llm = self.deps.triage.bind_tools(triage_tools)
 
-        graph.add_node("discovery", partial(discovery, llm=discovery_llm, settings = self.settings))
+        graph.add_node("discovery", phase_boundary(partial(discovery, llm=discovery_llm, settings=self.settings), "discovery"))
         graph.add_node(
             "discovery_tools",
-            ToolNode(discovery_tools),
-            retry_policy=tool_retry_policy,
+            phase_boundary(ToolNode(discovery_tools, handle_tool_errors=False).invoke, "discovery", accepts_config=True),
         )
 
-        graph.add_node("ingestion", partial(ingestion, llm=ingestion_llm, settings = self.settings))
-        graph.add_node("ingestion_tools", ToolNode(ingestion_tools), retry_policy=tool_retry_policy)
+        graph.add_node("ingestion", phase_boundary(partial(ingestion, llm=ingestion_llm, settings=self.settings), "ingestion", settings=self.settings))
+        graph.add_node("ingestion_tools", phase_boundary(ToolNode(ingestion_tools, handle_tool_errors=False).invoke, "ingestion", accepts_config=True))
 
-        graph.add_node("advisory", partial(advisor, llm=self.deps.advisory , settings = self.settings))
+        graph.add_node("advisory", phase_boundary(partial(advisor, llm=self.deps.advisory, settings=self.settings), "advisory"))
         
-        graph.add_node("triage", partial(triage, llm=triage_llm, settings = self.settings))
+        graph.add_node("triage", phase_boundary(partial(triage, llm=triage_llm, settings=self.settings), "triage"))
         graph.add_node(
             "triage_tools",
-            ToolNode(triage_tools),
-            retry_policy=tool_retry_policy,
+            phase_boundary(ToolNode(triage_tools, handle_tool_errors=False).invoke, "triage", accepts_config=True),
         )
 
-        graph.add_node("investigation", partial(investigation, llm=self.deps.investigation, settings = self.settings))
-        graph.add_node("human_review", human_review)
+        graph.add_node("investigation", phase_boundary(partial(investigation, llm=self.deps.investigation, settings=self.settings), "investigation"))
+        graph.add_node("human_review", phase_boundary(human_review, "human_review"))
 
 
         graph.add_edge(START, "discovery")
         graph.add_conditional_edges("discovery", route_after_discovery, {"tools": "discovery_tools", "completed": "triage", "no_results": END, "failed": END})
-        graph.add_edge("discovery_tools", "discovery")
+        graph.add_conditional_edges("discovery_tools", lambda state: "failed" if state.status == "failed" else "continue",
+                                    {"failed": END, "continue": "discovery"})
         graph.add_conditional_edges("triage", route_after_triage,
         {
             "accepted": "ingestion",
             "rejected": END,
+            "failed": END,
             "tools": "triage_tools"
             },)
-        graph.add_edge("triage_tools", "triage")
+        graph.add_conditional_edges("triage_tools", lambda state: "failed" if state.status == "failed" else "continue",
+                                    {"failed": END, "continue": "triage"})
         graph.add_conditional_edges(
             "ingestion",
             partial(route_after_ingestion, settings = self.settings),
@@ -151,9 +149,12 @@ class SherpaAgent:
                 "failed": END,
             },
         )
-        graph.add_edge("ingestion_tools", "ingestion")
-        graph.add_edge("investigation", "advisory")
-        graph.add_edge("advisory", "human_review")
+        graph.add_conditional_edges("ingestion_tools", lambda state: "failed" if state.status == "failed" else "continue",
+                                    {"failed": END, "continue": "ingestion"})
+        graph.add_conditional_edges("investigation", lambda state: "failed" if state.status == "failed" else "continue",
+                                    {"failed": END, "continue": "advisory"})
+        graph.add_conditional_edges("advisory", lambda state: "failed" if state.status == "failed" else "continue",
+                                    {"failed": END, "continue": "human_review"})
         graph.add_edge("human_review",  END)
 
         self._graph = graph.compile()

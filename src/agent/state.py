@@ -1,7 +1,7 @@
 from __future__ import annotations
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Annotated, Optional, Any, Literal
 from src.utils.repository_safety import (
     build_public_clone_url,
@@ -17,6 +17,10 @@ from .schema import (
     RepositoryStats,
     InvestigationFinding,
     SherpaReport,
+    TestExecutionResult,
+    NonBlankText,
+    WorkflowError,
+    DiscoveryOutcome,
 )
 import re
 
@@ -55,7 +59,6 @@ class BugFixingState(BaseModel):
     )
 
     discovery_status: Literal["pending", "completed", "no_results", "failed"] = "pending"
-    discovery_error: str | None = None
 
     # Repository GitHub
     repository_full_name: Optional[str] = None
@@ -106,8 +109,8 @@ class BugFixingState(BaseModel):
         default_factory=list
     )
     investigation_findings: list[InvestigationFinding] = Field(
-    default_factory=list
-)
+        default_factory=list
+    )
     error_signatures: list[str] = Field(
         default_factory=list
     )
@@ -119,32 +122,131 @@ class BugFixingState(BaseModel):
     )
     is_issue_feasible: Optional[bool] = None
 
+    # Worflow Error
+    workflow_error: WorkflowError | None = None
 
     # Esecuzione dei test
-    test_command: Optional[str] = None
+    test_command: NonBlankText | None = None
     test_logs: Optional[str] = None
-    tests_passed: Optional[bool] = None
-    test_exit_code: Optional[int] = None
-    test_timeout: bool = False
+    tests_passed: bool | None = Field(default=None, strict=True)
+    test_exit_code: int | None = Field(default=None, strict=True)
+    test_timeout: bool = Field(default=False, strict=True)
 
     # Ipotesi tecnica
-    current_hypothesis: Optional[str] = None
-    root_cause: Optional[str] = None
-    confidence_score: Optional[float] = None
+    current_hypothesis: NonBlankText | None = None
+    root_cause: NonBlankText | None = None
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    conclusion_reason: NonBlankText | None = None
 
     # Advisory e report
     report: Optional[SherpaReport] = None
     final_report: Optional[str] = None
 
     # Human-in-the-loop
-    human_feedback: Optional[str] = None
-    approval_status: Optional[str] = None
+    human_feedback: NonBlankText | None = None
+    reviewed_report_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approval_status: Literal["pending", "approved", "revision_requested", "rejected"] = "pending"
 
     # Controllo del workflow
     current_node: Optional[str] = None
     status: str = "initialized"
     error_message: Optional[str] = None
     retry_count: int = Field(default=0, ge=0)
+
+    def get_test_execution_result(self) -> TestExecutionResult | None:
+        """Convert runner fields; a planned command alone is not an execution."""
+        if (
+            self.test_logs is None
+            and self.tests_passed is None
+            and self.test_exit_code is None
+            and not self.test_timeout
+        ):
+            return None
+        if self.test_command is None:
+            raise ValueError("Il risultato del runner richiede il comando dei test")
+        result = TestExecutionResult(
+            command=self.test_command,
+            exit_code=self.test_exit_code,
+            timed_out=self.test_timeout,
+            logs=self.test_logs,
+        )
+        if self.tests_passed is not None and self.tests_passed != result.passed:
+            raise ValueError("tests_passed incoerente con il risultato del runner")
+        return result
+
+    @model_validator(mode="after")
+    def validate_intermediate_results(self) -> BugFixingState:
+        result = self.get_test_execution_result()
+        if self.report is not None and self.report.test_result != result:
+            raise ValueError("Il report deve usare il risultato del runner nello State")
+        if (
+            self.confidence_score is not None or self.root_cause is not None
+        ) and self.conclusion_reason is None:
+            raise ValueError("La conclusione richiede una motivazione complessiva")
+        return self
+
+    @model_validator(mode="after")
+    def validate_human_feedback(self) -> BugFixingState:
+        has_review = self.approval_status != "pending" or self.human_feedback is not None or self.reviewed_report_id is not None
+        if has_review:
+            if self.report is None or self.reviewed_report_id != self.report.report_id:
+                raise ValueError("La revisione deve riferirsi al report corrente")
+        if self.approval_status == "pending" and self.human_feedback is not None:
+            raise ValueError("Il feedback richiede una decisione di revisione")
+        if self.approval_status in ("revision_requested", "rejected") and self.human_feedback is None:
+            raise ValueError("Richiesta di revisione o rifiuto richiedono feedback")
+        return self
+
+    @model_validator(mode="after")
+    def validate_discovery_status(self) -> BugFixingState:
+        if self.discovery_status != "pending":
+            error = self.workflow_error
+            DiscoveryOutcome(
+                status=self.discovery_status,
+                candidates=self.issue_candidates,
+                error=error if error is not None and error.phase == "discovery" else None,
+            )
+        return self
+
+
+
+def report_review_update(
+    state: BugFixingState,
+    approval_status: Literal["approved", "revision_requested", "rejected"],
+    feedback: str | None = None,
+) -> dict[str, Any]:
+    """Validate a decision against the exact report that was reviewed."""
+    if state.report is None:
+        raise ValueError("Nessun report da valutare")
+    update = {
+        "approval_status": approval_status,
+        "human_feedback": feedback,
+        "reviewed_report_id": state.report.report_id,
+    }
+    BugFixingState.model_validate({**state.model_dump(), **update})
+    return update
+
+
+def report_update(state: BugFixingState, report: SherpaReport) -> dict[str, Any]:
+    """Publish a report into State and reset any previous review."""
+    update = {
+        "report": report, "approval_status": "pending",
+        "human_feedback": None, "reviewed_report_id": None,
+    }
+    BugFixingState.model_validate({**state.model_dump(), **update})
+    return update
+
+
+def test_execution_update(result: TestExecutionResult) -> dict[str, Any]:
+    """Map the runner result to State without asking a model for the outcome."""
+    result = TestExecutionResult.model_validate(result.model_dump())
+    return {
+        "test_command": result.command,
+        "test_logs": result.logs,
+        "tests_passed": result.passed,
+        "test_exit_code": result.exit_code,
+        "test_timeout": result.timed_out,
+    }
 
 
 def _merge_by_key(

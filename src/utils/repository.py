@@ -9,7 +9,8 @@ from typing import Literal
 from git import Repo
 from git.exc import GitCommandError as GitPythonCommandError
 # from utils.clone_worker import clone_into_temporary_directory
-from src.agent.schema import CloneRepositoryResult
+from src.agent.schema import CloneRepositoryResult, WorkflowError
+from src.agent.errors import classify_exception
 from src.utils.config import Settings
 from src.utils.repository_safety import (
     RepositoryValidationError,
@@ -191,6 +192,7 @@ def clone_repository_service(
     )
     temp_path: Path | None = None
     destination_parent: Path | None = None
+    inputs_validated = False
 
     try:
         owner, repository_name = validate_repository_full_name(
@@ -198,6 +200,7 @@ def clone_repository_service(
         )
         validated_issue_number = validate_issue_number(issue_number)
         validated_branch = validate_branch(default_branch)
+        inputs_validated = True
 
         workspace_root = Path(settings.workspace_root).expanduser().resolve()
         destination = resolve_inside_workspace(
@@ -298,10 +301,18 @@ def clone_repository_service(
         TypeError,
         ValueError,
     ) as exc:
+        error = classify_exception(exc, "ingestion")
+        if not inputs_validated:
+            error = WorkflowError(phase="ingestion", category="invalid_input", message="Input di clonazione non valido")
+        elif isinstance(exc, (TypeError, ValueError, AttributeError)):
+            error = WorkflowError(phase="ingestion", category="invariant_violation", message="Contratto del checkout non valido")
+        elif isinstance(exc, GitPythonCommandError):
+            error = WorkflowError(phase="ingestion", category="operational", message="Clone Git non riuscito")
         return CloneRepositoryResult(
             status="failed",
             repository_full_name=safe_repository_name,
-            message=f"Clone non completato: {exc}",
+            message=error.message,
+            error=error,
         )
     finally:
         if destination_parent is not None:

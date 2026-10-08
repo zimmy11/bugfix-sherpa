@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from langchain_core.tools import tool
 from github import Auth, Github
 from github.GithubException import GithubException
+from src.agent.errors import github_rate_limited, classify_exception
+from src.agent.schema import WorkflowError
 
 
 RELEVANT_TIMELINE_EVENTS = {
@@ -101,6 +103,7 @@ def create_github_client(token: str) -> Github:
         return Github(
             auth=auth,
             timeout=20,
+            retry=None,  # Retries are bounded by the workflow per operation.
         )
 
 def build_github_tools(
@@ -164,7 +167,7 @@ def build_github_tools(
                 try:
                     issues = search_results.get_page(next_page[query])
                 except GithubException as exc:
-                    if exc.status == 403:
+                    if github_rate_limited(exc):
                         rate_limited = True
                         break
                     raise
@@ -186,9 +189,11 @@ def build_github_tools(
                                 client.get_repo(repository_full_name)
                             )
                         except GithubException as exc:
-                            if exc.status == 403:
+                            if github_rate_limited(exc):
                                 rate_limited = True
                                 break
+                            if exc.status != 404:
+                                raise
                             repository_cache[repository_full_name] = None
 
                     repository = repository_cache[repository_full_name]
@@ -348,6 +353,7 @@ def build_github_tools(
                     "repository_full_name": repository_full_name,
                     "issue_number": issue_number,
                     "error": "repository_full_name non valido",
+                    "workflow_error": WorkflowError(phase="triage", category="invalid_input", message="repository_full_name non valido").model_dump(mode="json"),
                 })
                 continue
 
@@ -360,6 +366,7 @@ def build_github_tools(
                     "repository_full_name": repository_full_name,
                     "issue_number": issue_number,
                     "error": "repository_full_name non valido",
+                    "workflow_error": WorkflowError(phase="triage", category="invalid_input", message="repository_full_name non valido").model_dump(mode="json"),
                 })
                 continue
 
@@ -372,6 +379,7 @@ def build_github_tools(
                     "repository_full_name": repository_full_name,
                     "issue_number": issue_number,
                     "error": "issue_number deve essere positivo",
+                    "workflow_error": WorkflowError(phase="triage", category="invalid_input", message="issue_number deve essere positivo").model_dump(mode="json"),
                 })
                 continue
 
@@ -441,14 +449,38 @@ def build_github_tools(
                     ),
                 })
             except GithubException as exc:
+                # Never expose raw provider diagnostics: they can contain
+                # credentials in formats that redaction cannot recognize.
+                headers = {str(key).lower(): str(value) for key, value in (exc.headers or {}).items()}
                 data = exc.data if isinstance(exc.data, dict) else {}
+                provider_message = data.get("message", "")
+                rate_limited = exc.status == 429 or (
+                    exc.status == 403 and (
+                        headers.get("x-ratelimit-remaining") == "0"
+                        or "retry-after" in headers
+                        or (
+                            isinstance(provider_message, str)
+                            and "rate limit" in provider_message.lower()
+                        )
+                    )
+                )
+                if rate_limited:
+                    diagnostic = "limite di quota GitHub raggiunto"
+                else:
+                    diagnostic = {
+                        400: "richiesta GitHub non valida",
+                        401: "autenticazione GitHub non valida",
+                        403: "accesso GitHub non consentito",
+                        404: "issue o repository non disponibile",
+                        422: "parametri GitHub non validi",
+                    }.get(exc.status, "errore del servizio GitHub")
                 all_issue_threads.append({
                     "repository_full_name": repository_full_name,
                     "issue_number": issue_number,
-                    "error": (
-                        "Impossibile leggere l'issue: "
-                        f"{data.get('message', str(exc))}"
-                    )
+                    "error": f"Impossibile leggere l'issue: {diagnostic}",
+                    "http_status": exc.status,
+                    "retryable": rate_limited or 500 <= exc.status < 600,
+                    "workflow_error": classify_exception(exc, "triage").model_dump(mode="json"),
                 })
         return all_issue_threads
     

@@ -120,3 +120,53 @@ def test_passed_rejects_incomplete_execution_result(report_data, result):
 
     with pytest.raises(ValidationError):
         SherpaReport.model_validate(report_data)
+
+
+
+def test_conclusive_report_requires_overall_reason(report_data, finding_data):
+    report_data.update(
+        investigation_status="conclusive", findings=[finding_data],
+        main_hypothesis="The empty input is not checked before indexing.",
+    )
+    with pytest.raises(ValidationError, match="motivazione complessiva"):
+        SherpaReport.model_validate(report_data)
+
+
+def test_conclusive_report_keeps_overall_and_finding_reasons_distinct(
+    report_data, finding_data,
+):
+    report_data.update(
+        investigation_status="conclusive", findings=[finding_data],
+        main_hypothesis="The empty input is not checked before indexing.",
+        conclusion_reason="The reproducer and code observation support the same cause.",
+    )
+    report = SherpaReport.model_validate(report_data)
+    assert report.conclusion_reason != report.findings[0].confidence_reason
+    assert SherpaReport.model_validate_json(report.model_dump_json()) == report
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "repository_full_name", "issue_url", "branch", "problem_summary",
+        "main_hypothesis", "suggested_strategy", "conclusion_reason",
+    ],
+)
+def test_report_rejects_blank_text(report_data, field):
+    report_data[field] = " \t\n"
+    with pytest.raises(ValidationError):
+        SherpaReport.model_validate(report_data)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "declared_reproduction_steps", "verified_reproduction_steps",
+        "alternative_hypotheses", "investigation_limits", "tests_to_add",
+        "risks", "open_questions",
+    ],
+)
+def test_report_rejects_blank_list_items(report_data, field):
+    report_data[field] = [" \t\n"]
+    with pytest.raises(ValidationError):
+        SherpaReport.model_validate(report_data)

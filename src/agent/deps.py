@@ -17,18 +17,23 @@ class LLMNodesConfig:
     ) -> "LLMNodesConfig":
         return cls(
             discovery=ChatGoogleGenerativeAI(
-                model=settings.discovery_model
+                model=settings.discovery_model,
+                max_retries=1,  # The workflow owns the retry budget.
             ),
             triage=ChatGoogleGenerativeAI(
-                model=settings.triage_model
+                model=settings.triage_model,
+                max_retries=1,  # The workflow owns the retry budget.
             ),
             ingestion=ChatGoogleGenerativeAI(
-                model=settings.ingestion_model
+                model=settings.ingestion_model,
+                max_retries=1,  # The workflow owns the retry budget.
             ),
             investigation=ChatGoogleGenerativeAI(
-                model=settings.investigation_model
+                model=settings.investigation_model,
+                max_retries=1,  # The workflow owns the retry budget.
             ),
             advisory=ChatGoogleGenerativeAI(
-                model=settings.advisory_model
+                model=settings.advisory_model,
+                max_retries=1,  # The workflow owns the retry budget.
             ),
         )

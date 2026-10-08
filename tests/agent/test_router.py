@@ -1,9 +1,10 @@
 """Tests for transitions between the agent's workflow phases."""
 
 import pytest
+from langchain_core.messages import AIMessage
 
-from src.agent.router import route_after_ingestion, route_after_triage
-from src.agent.schema import IssueCandidate, RepositoryStats
+from src.agent.router import route_after_discovery, route_after_ingestion, route_after_triage
+from src.agent.schema import IssueCandidate, RepositoryStats, WorkflowError
 from src.agent.state import BugFixingState
 from src.utils.config import Settings
 
@@ -59,3 +60,35 @@ def test_ingestion_rejects_completed_snapshot_without_sha(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="SHA del checkout mancante"):
         route_after_ingestion(state, settings=settings)
+
+
+
+@pytest.mark.parametrize("with_tool_call", [False, True])
+@pytest.mark.parametrize("phase", ["discovery", "triage", "ingestion"])
+def test_failed_phase_stops_before_stale_tool_calls(phase, with_tool_call):
+    error = WorkflowError(phase=phase, category="invariant_violation", message="Invalid transition")
+    messages = [AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "stale-call",
+    }])] if with_tool_call else []
+    state = BugFixingState(**{f"{phase}_status": "failed"}, messages=messages, workflow_error=error)
+    if phase == "ingestion":
+        outcome = route_after_ingestion(state, settings=Settings(github_token="fake", google_api_key="fake"))
+    else:
+        router = route_after_discovery if phase == "discovery" else route_after_triage
+        outcome = router(state)
+    assert outcome == "failed"
+    assert state.workflow_error == error
+
+
+def test_discovery_without_an_explicit_outcome_cannot_be_completed():
+    with pytest.raises(ValueError):
+        route_after_discovery(BugFixingState())
+
+
+@pytest.mark.parametrize("phase", ["discovery", "triage"])
+def test_pending_phase_with_tool_call_can_still_use_tools(phase):
+    state = BugFixingState(messages=[AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "active-call",
+    }])])
+    router = route_after_discovery if phase == "discovery" else route_after_triage
+    assert router(state) == "tools"

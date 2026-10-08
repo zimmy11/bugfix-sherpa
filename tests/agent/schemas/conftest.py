@@ -6,8 +6,7 @@ import pytest
 @pytest.fixture
 def finding_data():
     return {
-        "file": "src/example.py",
-        "line": 12,
+        "source": {"type": "code", "file": "src/example.py", "line": 12},
         "observation": "The empty input reaches the indexing operation.",
         "interpretation": "The missing guard may explain the reported error.",
         "confidence": 0.8,
