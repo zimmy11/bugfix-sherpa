@@ -33,7 +33,7 @@ class Settings(BaseModel):
             "help wanted",
         ]
     )
-    github_max_results: int = 30
+    github_max_results: int = Field(default=10, strict=True)
     github_min_stars: int = 100
     repository_inactivity_days: int = Field(default = 7, gt=0)
 

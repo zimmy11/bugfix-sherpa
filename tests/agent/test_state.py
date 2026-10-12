@@ -1,10 +1,16 @@
 """Input and counter bounds for the workflow state."""
 
 import pytest
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
-from src.agent.state import BugFixingState, investigation_collection_update
+from src.agent.state import (
+    BugFixingState,
+    build_initial_state,
+    investigation_collection_update,
+)
+from src.utils.config import Settings
 
 
 @pytest.mark.parametrize("field", ("ingestion_attempts", "retry_count"))
@@ -36,6 +42,128 @@ def test_max_results_rejects_out_of_range(value):
 
 def test_initial_state_has_valid_result_limit():
     assert 1 <= BugFixingState().max_results <= 100
+
+
+def test_initial_workflow_phases_use_declared_pending_values():
+    state = BugFixingState()
+
+    assert state.discovery_status == "pending"
+    assert state.triage_status == "pending"
+    assert state.ingestion_status == "pending"
+    assert state.inspection_status == "not_started"
+    assert state.approval_status == "pending"
+
+
+def test_build_initial_state_starts_all_workflow_phases_cleanly():
+    settings = Settings(github_token="fake", google_api_key="fake")
+
+    state = build_initial_state(request=[], settings=settings)
+
+    assert state.discovery_status == "pending"
+    assert state.triage_status == "pending"
+    assert state.ingestion_status == "pending"
+    assert state.inspection_status == "not_started"
+    assert state.approval_status == "pending"
+    assert state.workflow_error is None
+    assert state.current_node is None
+    assert state.status == "initialized"
+
+
+def _settings(**overrides):
+    settings = Settings(github_token="fake", google_api_key="fake")
+    for field, value in overrides.items():
+        setattr(settings, field, value)
+    return settings
+
+
+def test_build_initial_state_normalizes_settings_and_request():
+    settings = _settings(
+        github_queries=["  is:issue   is:open  ", "language:Python"],
+        github_language="  Py THon  ",
+        github_labels=[" help   wanted ", "good first issue", "help wanted"],
+        github_max_results=25,
+    )
+
+    state = build_initial_state(
+        [HumanMessage(content="  Find   issues\nfor me  ")], settings,
+    )
+
+    assert state.github_query == ["is:issue is:open", "language:Python"]
+    assert state.language == "python"
+    assert state.labels == ["help wanted", "good first issue"]
+    assert state.max_results == 25
+    assert state.messages[0].content == "Find issues for me"
+
+
+@pytest.mark.parametrize("queries", ([], ["   "]))
+def test_build_initial_state_rejects_empty_queries(queries):
+    settings = _settings(github_queries=queries)
+    with pytest.raises(ValueError, match="quer"):
+        build_initial_state([], settings)
+
+
+def test_build_initial_state_rejects_non_string_query():
+    settings = _settings(github_queries=["is:issue", 42])
+    with pytest.raises(ValueError, match="stringa"):
+        build_initial_state([], settings)
+
+
+@pytest.mark.parametrize("language", ("", "   "))
+def test_build_initial_state_rejects_invalid_language(language):
+    settings = _settings(github_language=language)
+    with pytest.raises(ValueError, match="github_language"):
+        build_initial_state([], settings)
+
+
+@pytest.mark.parametrize("labels", ([], [" "]))
+def test_build_initial_state_rejects_empty_labels(labels):
+    settings = _settings(github_labels=labels)
+    with pytest.raises(ValueError, match="label"):
+        build_initial_state([], settings)
+
+
+def test_build_initial_state_rejects_non_string_label():
+    settings = _settings(github_labels=["help wanted", 7])
+    with pytest.raises(ValueError, match="stringa"):
+        build_initial_state([], settings)
+
+
+@pytest.mark.parametrize("limit", (0, 101, 10.5))
+def test_build_initial_state_rejects_invalid_result_limit(limit):
+    settings = _settings(github_max_results=limit)
+    with pytest.raises(ValueError, match="github_max_results"):
+        build_initial_state([], settings)
+
+
+def test_build_initial_state_rejects_boolean_result_limit():
+    with pytest.raises(ValidationError):
+        Settings(github_token="fake", google_api_key="fake", github_max_results=True)
+
+
+@pytest.mark.parametrize("limit", (1, 100))
+def test_build_initial_state_accepts_result_limit_boundaries(limit):
+    state = build_initial_state([], _settings(github_max_results=limit))
+    assert state.max_results == limit
+
+
+def test_build_initial_state_rejects_non_message_request_item():
+    with pytest.raises(ValueError, match="request|contenuto"):
+        build_initial_state(["not a message"], _settings())
+
+
+def test_initial_state_json_does_not_contain_settings_credentials_or_workspace():
+    secret = "TEST_ONLY_STATE_SECRET"
+    settings = Settings(
+        github_token=secret,
+        google_api_key="TEST_ONLY_API_KEY",
+        workspace_root="C:/private/workspace",
+    )
+
+    serialized = build_initial_state([], settings).model_dump_json()
+
+    assert secret not in serialized
+    assert "TEST_ONLY_API_KEY" not in serialized
+    assert "private/workspace" not in serialized
 
 
 def test_repeated_investigation_snapshot_does_not_duplicate_collections():

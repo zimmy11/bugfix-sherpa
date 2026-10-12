@@ -23,6 +23,8 @@ from .schema import (
     DiscoveryOutcome,
 )
 import re
+from langchain_core.messages import HumanMessage
+
 
 class BugFixingState(BaseModel):
     '''
@@ -249,6 +251,71 @@ def test_execution_update(result: TestExecutionResult) -> dict[str, Any]:
     }
 
 
+def build_initial_state(
+    request: list[HumanMessage], settings: Settings,
+) -> BugFixingState:
+    """Validate trusted discovery settings and normalize the initial messages."""
+    raw_queries = settings.github_queries
+    if not isinstance(raw_queries, list) or not raw_queries:
+        raise ValueError("github_queries deve essere una lista non vuota")
+
+    queries: list[str] = []
+    for query in raw_queries:
+        if not isinstance(query, str):
+            raise ValueError("Ogni query GitHub deve essere una stringa")
+        normalized_query = " ".join(query.split())
+        if not normalized_query:
+            raise ValueError("Le query GitHub non possono essere vuote")
+        queries.append(normalized_query)
+
+    raw_language = settings.github_language
+    if not isinstance(raw_language, str):
+        raise ValueError("github_language deve essere una stringa")
+    language = "".join(raw_language.split()).casefold()
+    if not language:
+        raise ValueError("github_language non puo essere vuota")
+
+    raw_labels = settings.github_labels
+    if not isinstance(raw_labels, list) or not raw_labels:
+        raise ValueError("github_labels deve essere una lista non vuota")
+    labels: list[str] = []
+    seen_labels: set[str] = set()
+    for label in raw_labels:
+        if not isinstance(label, str):
+            raise ValueError("Ogni label GitHub deve essere una stringa")
+        normalized_label = " ".join(label.split())
+        if not normalized_label:
+            raise ValueError("Le label GitHub non possono essere vuote")
+        if normalized_label not in seen_labels:
+            labels.append(normalized_label)
+            seen_labels.add(normalized_label)
+
+    raw_max_results = settings.github_max_results
+    if (
+        isinstance(raw_max_results, bool)
+        or not isinstance(raw_max_results, int)
+        or not 1 <= raw_max_results <= 100
+    ):
+        raise ValueError("github_max_results deve essere un intero compreso tra 1 e 100")
+
+    if not isinstance(request, list):
+        raise ValueError("request deve essere una lista di HumanMessage")
+    messages: list[HumanMessage] = []
+    for message in request:
+        if not isinstance(message, HumanMessage):
+            raise ValueError("request puo contenere solo HumanMessage")
+        if not isinstance(message.content, str):
+            raise ValueError("Il contenuto del messaggio deve essere una stringa")
+        messages.append(HumanMessage(content=" ".join(message.content.split())))
+
+    return BugFixingState(
+        messages=messages,
+        github_query=queries,
+        max_results=raw_max_results,
+        labels=labels,
+        language=language,
+    )
+
 def _merge_by_key(
     current: list[Any], new: list[Any], key,
 ) -> list[Any]:
@@ -455,7 +522,7 @@ def validate_ingestion_snapshot(state: BugFixingState, settings: Settings) -> No
         len(path.split("/")) > settings.max_repository_tree_depth
         for path in exposed_paths
     ):
-        raise ValueError("Profondità dei path oltre il limite")
+        raise ValueError("ProfonditÃ  dei path oltre il limite")
     if any(
         len(content) > settings.max_guide_chars
         for content in state.repository_guides.values()

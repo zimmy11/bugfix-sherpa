@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import hashlib
 import json
-
 from src.utils.repository_safety import validate_branch
 from src.utils.error_safety import sanitize_error_message
 
