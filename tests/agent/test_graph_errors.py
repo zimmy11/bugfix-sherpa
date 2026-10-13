@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables.graph import Graph
 
 import src.agent.graph as graph_module
-from src.agent.schema import IssueCandidate, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError
 from src.agent.state import BugFixingState
 from src.utils.config import Settings
 
@@ -25,7 +25,7 @@ def test_triage_failure_ends_graph_without_ingestion_or_retry(monkeypatch, categ
 
     def discovery(state, **kwargs):
         visited.append("discovery")
-        return {"messages": [AIMessage(content="Search finished")], "discovery_status": "completed"}
+        return {"messages": [AIMessage(content="Search finished")], "discovery_outcome": DiscoveryOutcome(status="completed", candidates=[candidate])}
 
     def triage(state, **kwargs):
         visited.append("triage")
@@ -63,7 +63,7 @@ def test_triage_failure_ends_graph_without_ingestion_or_retry(monkeypatch, categ
         },
     )
     result = agent._graph.invoke(
-        BugFixingState(issue_candidates=[candidate]), config={"recursion_limit": 5},
+        BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate])), config={"recursion_limit": 5},
     )
     assert visited == ["discovery", "triage"]
     assert result["triage_status"] == "failed"
@@ -81,7 +81,7 @@ def test_failed_tool_stops_actual_graph_before_another_model_call(monkeypatch):
         raise ValueError("token=TEST_ONLY_SECRET")
     def discovery(state, **kwargs):
         calls.append("model")
-        return {"discovery_status": "pending", "status": "running", "messages": [AIMessage(
+        return {"discovery_outcome": DiscoveryOutcome(status="pending"), "status": "running", "messages": [AIMessage(
             content="", tool_calls=[{"name": "search_github_issues", "args": {}, "id": "search-1"}],
         )]}
     monkeypatch.setattr(graph_module, "discovery", discovery)
@@ -97,7 +97,7 @@ def test_failed_tool_stops_actual_graph_before_another_model_call(monkeypatch):
     agent.create_graph()
     result = agent._graph.invoke(BugFixingState(), config={"recursion_limit": 6})
     assert calls == ["model", "tool"]
-    assert result["discovery_status"] == "failed"
+    assert result["status"] == "failed"
     assert result["workflow_error"].category == "invalid_input"
     assert "TEST_ONLY_SECRET" not in result["workflow_error"].message
 
@@ -115,7 +115,7 @@ def test_untrusted_state_updates_cannot_change_trusted_tool_configuration(monkey
 
     def discovery(state, **kwargs):
         return {
-            "discovery_status": "no_results",
+            "discovery_outcome": DiscoveryOutcome(status="no_results"),
             "max_results": 100,
             "github_token": "ATTACKER_TOKEN",
             "google_api_key": "ATTACKER_API_KEY",
@@ -152,6 +152,7 @@ def test_untrusted_state_updates_cannot_change_trusted_tool_configuration(monkey
     assert configured["github"]["limit"] == 2
     assert configured["github"]["discovery_queries"] == settings.github_queries
     assert configured["github"]["min_stars"] == settings.github_min_stars
+    assert configured["github"]["excluded_labels"] == settings.github_excluded_labels
     assert configured["repository_settings"] is settings
     assert result["max_results"] == 100
     assert "github_token" not in result

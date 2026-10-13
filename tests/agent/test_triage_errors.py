@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from src.agent.nodes.triage import triage_node
-from src.agent.schema import IssueCandidate, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError
 from src.agent.state import BugFixingState
 from src.utils.config import Settings
 
@@ -69,33 +69,33 @@ def _assert_failure(update, category="invariant_violation", retryable=False):
 
 @pytest.mark.parametrize("content", ["", "{broken token=TEST_ONLY_SECRET", "{}"])
 def test_invalid_model_response_becomes_a_structured_failure(settings, candidate, content):
-    state = BugFixingState(issue_candidates=[candidate])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]))
     update = triage_node(state, FakeLLM(AIMessage(content=content)), settings)
     _assert_failure(update)
 
 
 def test_malformed_thread_json_becomes_a_structured_failure(settings, candidate):
     state = BugFixingState(
-        issue_candidates=[candidate], messages=[_thread("{broken token=TEST_ONLY_SECRET")],
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]), messages=[_thread("{broken token=TEST_ONLY_SECRET")],
     )
     update = triage_node(state, FakeLLM(_decision()), settings)
     _assert_failure(update)
 
 
 def test_unknown_selected_issue_becomes_a_structured_failure(settings, candidate):
-    state = BugFixingState(issue_candidates=[candidate])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]))
     update = triage_node(state, FakeLLM(_decision(issue_key="owner/project#99")), settings)
     _assert_failure(update)
 
 
 def test_missing_selected_thread_becomes_a_structured_failure(settings, candidate):
-    state = BugFixingState(issue_candidates=[candidate])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]))
     update = triage_node(state, FakeLLM(_decision()), settings)
     _assert_failure(update)
 
 
 def test_llm_timeout_becomes_a_safe_retryable_failure(settings, candidate):
-    state = BugFixingState(issue_candidates=[candidate])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]))
     update = triage_node(state, FakeLLM(error=TimeoutError("token=TEST_ONLY_SECRET")), settings)
     _assert_failure(update, category="operational", retryable=True)
 
@@ -103,7 +103,7 @@ def test_llm_timeout_becomes_a_safe_retryable_failure(settings, candidate):
 @pytest.mark.parametrize("decision", ["accepted", "rejected"])
 def test_valid_decision_clears_a_previous_error(settings, candidate, decision):
     state = BugFixingState(
-        issue_candidates=[candidate],
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]),
         messages=[_thread(json.dumps([{
             "repository_full_name": "owner/project", "issue_number": 42,
             "body": "Reproduction", "comments": [],
@@ -120,7 +120,7 @@ def test_valid_decision_clears_a_previous_error(settings, candidate, decision):
 
 def test_selected_thread_error_becomes_a_safe_structured_failure(settings, candidate):
     state = BugFixingState(
-        issue_candidates=[candidate], messages=[_thread(json.dumps([{
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]), messages=[_thread(json.dumps([{
             "repository_full_name": "owner/project", "issue_number": 42,
             "error": "Remote failure token=TEST_ONLY_SECRET",
         }]))],
@@ -138,7 +138,7 @@ def test_selected_thread_error_becomes_a_safe_structured_failure(settings, candi
     (503, True, "operational"),
 ])
 def test_github_thread_failure_uses_http_metadata(settings, candidate, status, can_retry, category):
-    state = BugFixingState(issue_candidates=[candidate], messages=[_thread(json.dumps([{
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]), messages=[_thread(json.dumps([{
         "repository_full_name": "owner/project", "issue_number": 42,
         "error": "Provider diagnostic token=TEST_ONLY_SECRET",
         "http_status": status, "retryable": can_retry,
@@ -146,7 +146,7 @@ def test_github_thread_failure_uses_http_metadata(settings, candidate, status, c
     update = triage_node(state, FakeLLM(_decision()), settings)
     _assert_failure(update, category=category, retryable=can_retry)
     restored = BugFixingState.model_validate({**state.model_dump(), **update})
-    assert restored.issue_candidates == [candidate]
+    assert restored.discovery_outcome.candidates == [candidate]
 
 
 @pytest.mark.parametrize(("code", "category", "can_retry"), [
@@ -164,7 +164,7 @@ def test_model_service_failure_is_classified(settings, candidate, code, category
         wrapper = ChatGoogleGenerativeAIError("token=TEST_ONLY_SECRET")
         wrapper.__cause__ = error
         error = wrapper
-    state = BugFixingState(issue_candidates=[candidate])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]))
     update = triage_node(state, FakeLLM(error=error), settings)
     _assert_failure(update, category=category, retryable=can_retry)
     assert update["messages"] == []
@@ -173,17 +173,17 @@ def test_model_service_failure_is_classified(settings, candidate, code, category
 
 def test_failure_clears_stale_selection_but_preserves_candidates(settings, candidate):
     state = BugFixingState(
-        issue_candidates=[candidate], selected_issue=candidate, issue_number=42,
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]), selected_issue=candidate, issue_number=42,
         repository_full_name="owner/project", default_branch="main",
     )
     update = triage_node(state, FakeLLM(AIMessage(content="")), settings)
     restored = BugFixingState.model_validate({**state.model_dump(), **update})
-    assert restored.issue_candidates == [candidate]
+    assert restored.discovery_outcome.candidates == [candidate]
     assert restored.selected_issue is None
     assert restored.issue_number is None
     assert restored.repository_full_name is None
 
 
 def test_unexpected_programming_error_is_not_disguised_as_retryable(settings, candidate):
-    update = triage_node(BugFixingState(issue_candidates=[candidate]), FakeLLM(error=RuntimeError("bug")), settings)
+    update = triage_node(BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate])), FakeLLM(error=RuntimeError("bug")), settings)
     _assert_failure(update, category="invariant_violation", retryable=False)

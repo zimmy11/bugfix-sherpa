@@ -46,6 +46,7 @@ def clean_config_env(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake")
     for env_name in (
         "GITHUB_LABELS",
+        "GITHUB_EXCLUDED_LABELS",
         "GITHUB_MAX_RESULTS",
         "REPOSITORY_INACTIVITY_DAYS",
         "API_MAX_RETRIES",
@@ -150,6 +151,16 @@ def test_default_queries_are_generated():
 
     assert settings.github_queries
     assert all(query.strip() for query in settings.github_queries)
+
+
+def test_excluded_labels_are_configurable_and_normalized(clean_config_env, monkeypatch):
+    monkeypatch.setenv("GITHUB_EXCLUDED_LABELS", " Duplicate ,WONTFIX, duplicate ")
+    assert config.load_settings().github_excluded_labels == ["duplicate", "wontfix"]
+    monkeypatch.setenv("GITHUB_EXCLUDED_LABELS", "")
+    assert config.load_settings().github_excluded_labels == []
+    monkeypatch.setenv("GITHUB_EXCLUDED_LABELS", "duplicate, ")
+    with pytest.raises(ValidationError, match="github_excluded_labels"):
+        config.load_settings()
 
 
 def test_load_settings_rejects_inverted_backoff(clean_config_env, monkeypatch):

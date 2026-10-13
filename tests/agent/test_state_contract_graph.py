@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from src.agent.router import route_after_discovery, route_after_triage
-from src.agent.schema import IssueCandidate, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError
 from src.agent.state import BugFixingState, build_initial_state
 from src.utils.config import Settings
 
@@ -27,11 +27,11 @@ def test_offline_graph_passes_models_and_stops_on_typed_error(triage_fails):
     def discovery(state):
         visited.append("discovery")
         assert state.messages[0].content == "Find issues"
-        return {"discovery_status": "completed", "issue_candidates": [candidate]}
+        return {"discovery_outcome": DiscoveryOutcome(status="completed", candidates=[candidate])}
 
     def triage(state):
         visited.append("triage")
-        assert isinstance(state.issue_candidates[0], IssueCandidate)
+        assert isinstance(state.discovery_outcome.candidates[0], IssueCandidate)
         if triage_fails:
             return {
                 "triage_status": "failed",
@@ -41,7 +41,7 @@ def test_offline_graph_passes_models_and_stops_on_typed_error(triage_fails):
                 ),
             }
         return {
-            "triage_status": "accepted", "selected_issue": state.issue_candidates[0],
+            "triage_status": "accepted", "selected_issue": state.discovery_outcome.candidates[0],
             "repository_full_name": candidate.repository_full_name,
             "issue_number": candidate.issue_number, "issue_url": candidate.url,
             "default_branch": candidate.repository_stats.default_branch,

@@ -78,6 +78,7 @@ class SherpaAgent:
             discovery_queries=self.settings.github_queries,
             limit=self.settings.github_max_results,
             min_stars=self.settings.github_min_stars,
+            excluded_labels=self.settings.github_excluded_labels,
             repository_inactivity_days=(
                 self.settings.repository_inactivity_days
             ),

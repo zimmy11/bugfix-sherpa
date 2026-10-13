@@ -15,7 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import ValidationError
 
-from src.agent.schema import WorkflowError, WorkflowPhase
+from src.agent.schema import DiscoveryOutcome, WorkflowError, WorkflowPhase
 from src.utils.config import Settings
 from src.utils.repository_safety import RepositoryValidationError
 
@@ -110,10 +110,14 @@ def invoke_with_retry(operation: Callable[[], Any], phase: WorkflowPhase,
 
 
 def failure_update(error: WorkflowError) -> dict[str, Any]:
-    """Keep legacy text mirrors until all consumers have migrated."""
+    """Return a typed failure update for the phase that stopped."""
     update = {"workflow_error": error, "status": "failed", "current_node": error.phase,
               "error_message": error.message}
-    if error.phase in {"discovery", "triage", "ingestion"}:
+    if error.phase == "discovery":
+        update["discovery_outcome"] = DiscoveryOutcome(
+            status="failed", message=error.message,
+        )
+    elif error.phase in {"triage", "ingestion"}:
         update[f"{error.phase}_status"] = "failed"
     if error.phase == "triage":
         update.update(selected_issue=None, issue_number=None, issue_url=None,

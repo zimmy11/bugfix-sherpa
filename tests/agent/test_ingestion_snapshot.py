@@ -5,6 +5,7 @@ import pytest
 from src.agent.router import route_after_ingestion
 from src.agent.schema import (
     CloneRepositoryResult,
+    DiscoveryOutcome,
     InspectRepositoryResult,
     IssueCandidate,
     RepositoryStats,
@@ -37,7 +38,7 @@ def valid_snapshot(tmp_path):
     )
     checkout_path = tmp_path / "workspace" / "owner" / "project" / "issue-42"
     state = BugFixingState(
-        issue_candidates=[candidate],
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]),
         selected_issue=candidate,
         issue_number=42,
         issue_url=candidate.url,

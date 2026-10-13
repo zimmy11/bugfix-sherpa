@@ -5,7 +5,7 @@ from src.utils.config import Settings
 from src.agent.state import BugFixingState
 from src.prompts.discovery import DISCOVERY_SYSTEM_PROMPT as SYSTEM_PROMPT
 from langchain_core.messages import SystemMessage, ToolMessage
-from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, WorkflowError, SearchIssuesResult
 import json
 from src.agent.errors import WorkflowFailure, invoke_with_retry
 
@@ -17,24 +17,23 @@ def _latest_search_result(messages: list) -> ToolMessage | None:
     return None
 
 
-def _outcome_update(response, outcome: DiscoveryOutcome) -> dict:
+def _outcome_update(response, outcome: DiscoveryOutcome, error: WorkflowError | None = None) -> dict:
     return {
         "messages": [response] if response is not None else [],
-        "issue_candidates": outcome.candidates,
-        "discovery_status": outcome.status,
+        "discovery_outcome": outcome,
         "status": "failed" if outcome.status == "failed" else "completed" if outcome.status == "no_results" else "running",
-        "workflow_error": outcome.error,
         "current_node": "discovery",
+        "workflow_error": error,
     }
 
 
-def _failed_update(response, reason: str, category: str, *, retryable: bool = False) -> dict:
+def _failed_update(response, reason: str, category: str, candidates: list[IssueCandidate] | None = None, retryable: bool = False) -> dict:
     return _outcome_update(response, DiscoveryOutcome(
         status="failed",
+        candidates=candidates if candidates else [], ),
         error=WorkflowError(
             phase="discovery", message=reason, category=category, retryable=retryable,
-        ),
-    ))
+        ))
 
 
 def discovery_node(
@@ -49,37 +48,30 @@ def discovery_node(
             "discovery", settings,
         )
     except WorkflowFailure as exc:
-        return _outcome_update(None, DiscoveryOutcome(status="failed", error=exc.error))
+        return _outcome_update(None, DiscoveryOutcome(status="failed"), error=exc.error)
 
     if getattr(response, "tool_calls", None):
         return {
             "messages": [response],
-            "discovery_status": "pending",
+            "discovery_outcome": DiscoveryOutcome(status="pending"),
             "status": "running",
-            "workflow_error": None,
-            "current_node": "discovery",
         }
+    
 
     tool_message = _latest_search_result(state.messages)
+
     if tool_message is None:
         return _failed_update(response, "Discovery non ha ricevuto risultati dal tool GitHub", category="invariant_violation")
 
     try:
-        result = (
-            json.loads(tool_message.content)
-            if isinstance(tool_message.content, str)
-            else tool_message.content
-        )
+        raw = json.loads(tool_message.content)
+        tool_result = SearchIssuesResult.model_validate(raw)
+
     except (TypeError, ValueError):
         return _failed_update(response, "Risposta JSON del tool Discovery non valida", category="invariant_violation")
 
-    if not isinstance(result, dict):
-        return _failed_update(response, "Risposta del tool Discovery non valida", category="invariant_violation")
-
-    tool_status = result.get("status")
-    raw_candidates = result.get("candidates")
-    if not isinstance(raw_candidates, list):
-        return _failed_update(response, "Candidate Discovery mancanti o non valide", category="invariant_violation")
+    tool_status = tool_result.status
+    raw_candidates = tool_result.candidates
 
     candidates: dict[tuple[str, int], IssueCandidate] = {}
     try:
@@ -108,7 +100,11 @@ def discovery_node(
         return _failed_update(response, "Stato del tool Discovery sconosciuto", "invariant_violation")
 
     try:
-        outcome = DiscoveryOutcome(status=status, candidates=candidate_list, error=error)
+        outcome = DiscoveryOutcome(
+            status=status,
+            candidates=candidate_list,
+            message=tool_result.message,
+        )
     except ValidationError:
         return _failed_update(response, "Esito Discovery incoerente", "invariant_violation")
-    return _outcome_update(response, outcome)
+    return _outcome_update(response, outcome, error=error)

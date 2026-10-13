@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 import src.agent.errors as errors
-from src.agent.schema import WorkflowError
+from src.agent.schema import DiscoveryOutcome, WorkflowError
 from src.agent.state import BugFixingState
 from src.utils.config import Settings
 
@@ -75,6 +75,21 @@ def test_unimplemented_phase_returns_structured_error(phase):
     assert update["error_message"] == update["workflow_error"].message
     if phase == "ingestion":
         assert update["ingestion_error"] == update["workflow_error"].message
+
+
+def test_discovery_failure_update_uses_typed_outcome():
+    error = WorkflowError(
+        phase="discovery", category="operational", message="Quota exhausted",
+        retryable=True,
+    )
+
+    update = errors.failure_update(error)
+
+    assert update["workflow_error"] == error
+    assert update["discovery_outcome"] == DiscoveryOutcome(
+        status="failed", message="Quota exhausted",
+    )
+    assert "discovery_status" not in update
 
 
 def test_invalid_state_update_is_an_invariant_error():

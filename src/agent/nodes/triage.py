@@ -92,7 +92,7 @@ def triage_node(
 
 
     enriched_candidates = []
-    for candidate in state.issue_candidates:
+    for candidate in state.discovery_outcome.candidates:
         enriched_candidate = candidate.model_dump(mode="json")
         candidate_key = f"{candidate.repository_full_name}#{candidate.issue_number}"
         if candidate_key in thread_by_key:
@@ -190,7 +190,7 @@ def triage_node(
     selected_candidate = next(
         (
             candidate
-            for candidate in state.issue_candidates
+            for candidate in state.discovery_outcome.candidates
             if (
                 f"{candidate.repository_full_name}#{candidate.issue_number}"
             ) == decision.issue_key
@@ -249,5 +249,5 @@ def triage_node(
         "status": "running",
         "triage_reason": decision.reason,
         "current_node": "triage",
-        "workflow_error": None
+        "workflow_error": None,
     }

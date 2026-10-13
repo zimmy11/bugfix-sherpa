@@ -5,7 +5,7 @@ from langchain_core.tools import tool
 from github import Auth, Github
 from github.GithubException import GithubException
 from src.agent.errors import github_rate_limited, classify_exception
-from src.agent.schema import WorkflowError
+from src.agent.schema import WorkflowError, SearchIssuesResult
 
 
 RELEVANT_TIMELINE_EVENTS = {
@@ -112,7 +112,11 @@ def build_github_tools(
     limit,
     min_stars,
     repository_inactivity_days,
+    excluded_labels=None,
 ):
+    excluded_label_names = {
+        label.strip().casefold() for label in (excluded_labels or [])
+    }
  
     @tool
     def search_github_issues() -> dict[str, Any]:
@@ -127,12 +131,15 @@ def build_github_tools(
         inspect repository files.
 
         Returns:
-            A serializable dictionary containing a status, an explanatory
-            message and the candidate issue list. Candidate issues include the
-            repository name, issue number, title, URL, labels, assignees, a
-            shortened body and repository statistics. If no suitable issue is
-            found, ``candidates`` is an empty list and ``status`` is
-            ``no_results``.
+            A compact, JSON-serializable record validated by ``SearchIssuesResult`` with ``status``,
+            ``message`` and ``candidates``. Status is ``completed`` when the
+            configured candidate limit is reached, ``partial_results`` when
+            the search ends with fewer candidates, or ``no_results`` when no
+            candidate qualifies. A rate limit returns ``rate_limited`` if no
+            candidates were collected, or ``partial_rate_limited`` with the
+            candidates collected before the limit. Each candidate contains
+            only serialized issue and repository fields; no PyGithub objects
+            are returned.
         """
 
         candidates: dict[tuple[str, int], dict] = {}
@@ -179,9 +186,14 @@ def build_github_tools(
                 next_page[query] += 1
 
                 for issue in issues:
+                    if issue.state != "open":
+                        continue
                     repository_full_name = issue.repository_url.removeprefix(
                         "https://api.github.com/repos/"
                     )
+                    issue_labels = {label.name.strip().casefold() for label in issue.labels}
+                    if issue_labels & excluded_label_names:
+                        continue
 
                     if repository_full_name not in repository_cache:
                         try:
@@ -213,7 +225,7 @@ def build_github_tools(
                         )
                     if repository_pushed_at < pushed_after:
                         continue
-                    if issue.assignees or not issue.title or not issue.body:
+                    if issue.assignees or not issue.title or not (issue.body or "").strip():
                         continue
 
                     key = (repository.full_name, issue.number)
@@ -248,41 +260,29 @@ def build_github_tools(
 
         candidate_list = list(candidates.values())
         if rate_limited:
-            return {
-                "status": (
-                    "partial_rate_limited"
-                    if candidate_list
-                    else "rate_limited"
-                ),
-                "message": (
+            return SearchIssuesResult(status = ("partial_rate_limited" if candidate_list else "rate_limited"),
+                                    message = (
                     "GitHub ha interrotto la ricerca con HTTP 403. "
                     "Sono restituiti soltanto gli eventuali risultati già "
                     "raccolti; attendere il ripristino della quota prima di "
                     "ripetere Discovery."
                 ),
-                "candidates": candidate_list,
-            }
+                candidates=candidate_list).model_dump(mode="json")
 
         if len(candidate_list) < limit:
-            return {
-                "status": (
-                    "partial_results" if candidate_list else "no_results"
-                ),
-                "message": (
+            return SearchIssuesResult(status = ("partial_results" if candidate_list else "no_results"),
+                                    message =  (
                     "Le query di Discovery sono state esaurite. "
                     f"Trovate {len(candidate_list)} issue candidate su "
                     f"{limit} richieste."
                 ),
-                "candidates": candidate_list,
-            }
+                candidates=candidate_list).model_dump(mode="json")
 
-        return {
-            "status": "completed",
-            "message": (
+        return SearchIssuesResult(status = "completed",
+                                message =  (
                 f"Trovate {len(candidate_list)} issue candidate."
-            ),
-            "candidates": candidate_list,
-        }
+                                            ),
+                candidates=candidate_list).model_dump(mode="json")
                   
 
     @tool

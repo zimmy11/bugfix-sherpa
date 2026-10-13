@@ -39,18 +39,9 @@ def route_after_ingestion(state: BugFixingState, *, settings: Settings) -> str:
     )
 
 def route_after_discovery(state: BugFixingState) -> str:
-    if state.discovery_status == "pending":
+    if state.discovery_outcome.status == "pending":
         if state.messages and getattr(state.messages[-1], "tool_calls", None):
             return "tools"
         raise ValueError("Discovery non ha prodotto un esito valido")
 
-    # Later phases may have their own error in the shared State. Only the
-    # Discovery error belongs to this outcome.
-    error = state.workflow_error
-    discovery_error = error if error is not None and error.phase == "discovery" else None
-    outcome = DiscoveryOutcome(
-        status=state.discovery_status,
-        candidates=state.issue_candidates,
-        error=discovery_error,
-    )
-    return outcome.status
+    return state.discovery_outcome.status

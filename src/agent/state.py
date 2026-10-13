@@ -56,11 +56,14 @@ class BugFixingState(BaseModel):
     selected_issue: IssueCandidate | None = None
 
     # Risultati Discovery
-    issue_candidates: list[IssueCandidate] = Field(
-        default_factory=list
-    )
+    discovery_outcome: DiscoveryOutcome = Field(default_factory=lambda: DiscoveryOutcome(status="pending"))
+    workflow_error: WorkflowError | None = None
+    # issue_candidates: list[IssueCandidate] = Field(
+    #     default_factory=list
+    # )
+    # workflow_error: WorkflowError | None = None
 
-    discovery_status: Literal["pending", "completed", "no_results", "failed"] = "pending"
+    # discovery_status: Literal["pending", "completed", "no_results", "failed"] = "pending"
 
     # Repository GitHub
     repository_full_name: Optional[str] = None
@@ -124,8 +127,6 @@ class BugFixingState(BaseModel):
     )
     is_issue_feasible: Optional[bool] = None
 
-    # Worflow Error
-    workflow_error: WorkflowError | None = None
 
     # Esecuzione dei test
     test_command: NonBlankText | None = None
@@ -199,16 +200,6 @@ class BugFixingState(BaseModel):
             raise ValueError("Richiesta di revisione o rifiuto richiedono feedback")
         return self
 
-    @model_validator(mode="after")
-    def validate_discovery_status(self) -> BugFixingState:
-        if self.discovery_status != "pending":
-            error = self.workflow_error
-            DiscoveryOutcome(
-                status=self.discovery_status,
-                candidates=self.issue_candidates,
-                error=error if error is not None and error.phase == "discovery" else None,
-            )
-        return self
 
 
 
@@ -368,7 +359,7 @@ def validate_selected_issue(state: BugFixingState) -> IssueCandidate:
     selected = state.selected_issue
     candidate = next(
         (
-            item for item in state.issue_candidates
+            item for item in state.discovery_outcome.candidates
             if item.repository_full_name == selected.repository_full_name
             and item.issue_number == selected.issue_number
         ),

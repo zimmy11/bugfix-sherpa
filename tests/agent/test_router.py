@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from src.agent.router import route_after_discovery, route_after_ingestion, route_after_triage
-from src.agent.schema import IssueCandidate, RepositoryStats, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, RepositoryStats, WorkflowError
 from src.agent.state import BugFixingState
 from src.utils.config import Settings
 
@@ -26,7 +26,7 @@ def _accepted_issue_state() -> BugFixingState:
         ),
     )
     return BugFixingState(
-        issue_candidates=[candidate],
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]),
         selected_issue=candidate,
         issue_number=candidate.issue_number,
         issue_url=candidate.url,
@@ -46,7 +46,7 @@ def test_triage_rejects_url_different_from_candidate() -> None:
 
 def test_triage_rejects_candidate_not_in_discovery_results() -> None:
     state = _accepted_issue_state()
-    state.issue_candidates = []
+    state.discovery_outcome = DiscoveryOutcome(status="no_results")
 
     with pytest.raises(ValueError, match="non presente nelle candidate"):
         route_after_triage(state)
@@ -86,7 +86,12 @@ def test_failed_phase_stops_before_stale_tool_calls(phase, with_tool_call):
     messages = [AIMessage(content="", tool_calls=[{
         "name": "search_github_issues", "args": {}, "id": "stale-call",
     }])] if with_tool_call else []
-    state = BugFixingState(**{f"{phase}_status": "failed"}, messages=messages, workflow_error=error)
+    phase_state = (
+        {"discovery_outcome": DiscoveryOutcome(status="failed")}
+        if phase == "discovery"
+        else {f"{phase}_status": "failed"}
+    )
+    state = BugFixingState(**phase_state, messages=messages, workflow_error=error)
     if phase == "ingestion":
         outcome = route_after_ingestion(state, settings=Settings(github_token="fake", google_api_key="fake"))
     else:

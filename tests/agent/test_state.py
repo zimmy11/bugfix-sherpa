@@ -10,7 +10,7 @@ from src.agent.state import (
     build_initial_state,
     investigation_collection_update,
 )
-from src.agent.schema import IssueCandidate, SherpaReport, WorkflowError
+from src.agent.schema import DiscoveryOutcome, IssueCandidate, SherpaReport, WorkflowError
 from src.utils.config import Settings
 
 
@@ -48,7 +48,7 @@ def test_initial_state_has_valid_result_limit():
 def test_initial_workflow_phases_use_declared_pending_values():
     state = BugFixingState()
 
-    assert state.discovery_status == "pending"
+    assert state.discovery_outcome.status == "pending"
     assert state.triage_status == "pending"
     assert state.ingestion_status == "pending"
     assert state.inspection_status == "not_started"
@@ -60,7 +60,7 @@ def test_build_initial_state_starts_all_workflow_phases_cleanly():
 
     state = build_initial_state(request=[], settings=settings)
 
-    assert state.discovery_status == "pending"
+    assert state.discovery_outcome.status == "pending"
     assert state.triage_status == "pending"
     assert state.ingestion_status == "pending"
     assert state.inspection_status == "not_started"
@@ -174,7 +174,7 @@ def test_empty_state_round_trips_through_json():
 
     assert restored == original
     assert restored.messages == []
-    assert restored.issue_candidates == []
+    assert restored.discovery_outcome.candidates == []
     assert restored.inspection_status == "not_started"
 
 
@@ -200,7 +200,7 @@ def test_populated_state_round_trips_with_messages_and_nested_models():
     )
     original = BugFixingState(
         messages=[HumanMessage(content="Find a bug"), AIMessage(content="Found one")],
-        issue_candidates=[candidate], selected_issue=candidate,
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]), selected_issue=candidate,
         repository_stats=candidate.repository_stats,
         report=report,
         workflow_error=WorkflowError(
@@ -216,7 +216,7 @@ def test_populated_state_round_trips_with_messages_and_nested_models():
     assert restored == original
     assert isinstance(restored.messages[0], HumanMessage)
     assert isinstance(restored.messages[1], AIMessage)
-    assert isinstance(restored.issue_candidates[0], IssueCandidate)
+    assert isinstance(restored.discovery_outcome.candidates[0], IssueCandidate)
     assert restored.report.report_id == report.report_id
     assert isinstance(restored.workflow_error, WorkflowError)
 

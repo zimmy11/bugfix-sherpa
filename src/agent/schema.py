@@ -327,27 +327,36 @@ class WorkflowError(BaseModel):
             raise ValueError("Non è possibile avere un errore del WorkFlow retryable appartenente alla categoria 'invalid_input' o 'invariant_violation'")
         return self
 
+class SearchIssuesResult(BaseModel):
+    status: Literal["completed", "no_results", "partial_rate_limited", "rate_limited", "partial_results" ]
+    candidates: list[IssueCandidate] = Field(default_factory=list)
+    message: str
+    @model_validator(mode="after")
+    def validate_status_candidates(self) -> SearchIssuesResult:
+        if self.candidates and self.status in ("no_results", "rate_limited"):
+            raise ValueError(f"Lista deve essere vuota per status {self.status}")
+        if not self.candidates and self.status in ("completed", "partial_results", "partial_rate_limited"):
+            raise ValueError(f"Lista vuota. Deve contenere almeno un valore per status {self.status}")
+
+        return self
 
 
 class DiscoveryOutcome(BaseModel):
     """Validated final search outcome; pending remains a workflow state."""
 
-    status: Literal["completed", "no_results", "failed"]
+    status: Literal["completed", "no_results", "failed", "pending"]
     candidates: list[IssueCandidate] = Field(default_factory=list)
-    error: WorkflowError | None = None
+    message: str | None = None
 
     @model_validator(mode="after")
     def validate_outcome(self) -> DiscoveryOutcome:
-        if self.status == "failed":
-            if self.error is None or self.error.phase != "discovery":
-                raise ValueError("Discovery fallita richiede un errore Discovery")
-        else:
-            if self.error is not None:
-                raise ValueError("Discovery riuscita non puo avere un errore")
-            if self.status == "completed" and not self.candidates:
-                raise ValueError("Discovery completata richiede candidate")
-            if self.status == "no_results" and self.candidates:
-                raise ValueError("no_results richiede candidate vuote")
+
+        if self.status == "completed" and not self.candidates:
+            raise ValueError("Discovery completata richiede candidate")
+        if self.status == "no_results" and self.candidates:
+            raise ValueError("no_results richiede candidate vuote")
+        if self.status == "pending" and self.candidates:
+            raise ValueError("'status' non può essere pending mentre 'candidates' non è vuota")
         return self
 
 

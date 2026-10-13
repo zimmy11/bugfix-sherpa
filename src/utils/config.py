@@ -33,6 +33,7 @@ class Settings(BaseModel):
             "help wanted",
         ]
     )
+    github_excluded_labels: list[str] = Field(default_factory=lambda: ["duplicate", "wontfix"])
     github_max_results: int = Field(default=10, strict=True)
     github_min_stars: int = 100
     repository_inactivity_days: int = Field(default = 7, gt=0)
@@ -111,6 +112,13 @@ class Settings(BaseModel):
             raise ValueError("github_labels deve contenere almeno una label")
         return value
 
+    @field_validator("github_excluded_labels")
+    @classmethod
+    def normalize_excluded_labels(cls, value: list[str]) -> list[str]:
+        if any(not isinstance(label, str) or not label.strip() for label in value):
+            raise ValueError("github_excluded_labels contiene una label vuota o non valida")
+        return list(dict.fromkeys(label.strip().casefold() for label in value))
+
     @field_validator(
         "github_min_stars",
     )
@@ -158,6 +166,10 @@ def load_settings() -> Settings:
         ).split(",")
         if label.strip()
     ]
+    excluded_labels = [
+        label.strip()
+        for label in os.getenv("GITHUB_EXCLUDED_LABELS", "duplicate,wontfix").split(",")
+    ] if os.getenv("GITHUB_EXCLUDED_LABELS", "duplicate,wontfix") else []
 
     return Settings(
         github_token=os.getenv("GITHUB_TOKEN", ""),
@@ -189,6 +201,7 @@ def load_settings() -> Settings:
             "python",
         ),
         github_labels=labels,
+        github_excluded_labels=excluded_labels,
         github_max_results=int(
             os.getenv("GITHUB_MAX_RESULTS", str(Settings.model_fields["github_max_results"].default))
         ),
