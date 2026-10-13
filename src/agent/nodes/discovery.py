@@ -29,23 +29,24 @@ def get_result_for_current_search(messages: list) -> SearchIssuesResult:
 
     raise ValueError("Nessuna ricerca Discovery trovata")
 
-def _outcome_update(response, outcome: DiscoveryOutcome, error: WorkflowError | None = None) -> dict:
+def _outcome_update(response, outcome: DiscoveryOutcome,  attempt: int,  error: WorkflowError | None = None) -> dict:
     return {
         "messages": [response] if response is not None else [],
         "discovery_outcome": outcome,
-        "status": "failed" if outcome.status == "failed" else "completed" if outcome.status == "no_results" else "running",
+        "status": "failed" if outcome.status in {"failed", "rate_limited", "partial_rate_limited"} else "completed" if outcome.status == "no_results" else "running",
         "current_node": "discovery",
         "workflow_error": error,
+        "discovery_attempt": attempt
     }
 
 
-def _failed_update(response, reason: str, category: str, candidates: list[IssueCandidate] | None = None, retryable: bool = False) -> dict:
+def _failed_update(response, reason: str, category: str, attempt: int,  candidates: list[IssueCandidate] | None = None, retryable: bool = False) -> dict:
     return _outcome_update(response, DiscoveryOutcome(
         status="failed",
         candidates=candidates if candidates else [], ),
         error=WorkflowError(
             phase="discovery", message=reason, category=category, retryable=retryable,
-        ))
+        ), attempt = attempt)
 
 
 def discovery_node(
@@ -54,30 +55,57 @@ def discovery_node(
     settings: Settings,
 ) -> dict:
     """Apply the model's final selection to the current search result."""
+    attempt = state.discovery_attempt
+    if (state.messages and isinstance(state.messages[-1], ToolMessage)
+            and state.messages[-1].name == "search_github_issues"):
+        try:
+            current_result = get_result_for_current_search(state.messages)
+        except (TypeError, ValueError):
+            return _failed_update(None, "Risposta JSON del tool Discovery non valida", "invariant_violation", attempt)
+        if current_result.status in {"rate_limited", "partial_rate_limited"}:
+            return _outcome_update(None, DiscoveryOutcome(
+                status=current_result.status,
+                candidates=current_result.candidates,
+                message=current_result.message,
+            ), attempt=attempt, error=WorkflowError(
+                phase="discovery", message="Ricerca GitHub interrotta per limite di quota",
+                category="operational", retryable=True,
+            ))
+    if attempt >= settings.discovery_max_steps:
+        return _failed_update(None, "Discovery ha raggiunto il numero massimo di passaggi", category = "operational", attempt = attempt)
+    attempt += 1
+
     try:
         response = invoke_with_retry(
             lambda: llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state.messages]),
             "discovery", settings,
         )
     except WorkflowFailure as exc:
-        return _outcome_update(None, DiscoveryOutcome(status="failed"), error=exc.error)
+        return _outcome_update(None, DiscoveryOutcome(status="failed"), error=exc.error, attempt=attempt)
 
     if getattr(response, "tool_calls", None):
         if (len(response.tool_calls) != 1
                 or response.tool_calls[0]["name"] != "search_github_issues"):
-            return _failed_update(response, "Chiamata tool Discovery non valida", "invariant_violation")
+            return _failed_update(response, "Chiamata tool Discovery non valida", "invariant_violation", attempt=attempt)
+        if any(
+            isinstance(message, AIMessage)
+            and any(call["name"] == "search_github_issues" for call in message.tool_calls)
+            for message in state.messages
+        ):
+            return _failed_update(response, "Ricerca GitHub ripetuta in Discovery", "invariant_violation", attempt=attempt)
         return {
             "messages": [response],
             "discovery_outcome": DiscoveryOutcome(status="pending"),
             "workflow_error": None,
             "status": "running",
             "current_node": "discovery",
+            "discovery_attempt": attempt
         }
 
     try:
         tool_result = get_result_for_current_search(state.messages)
     except (TypeError, ValueError):
-        return _failed_update(response, "Risposta JSON del tool Discovery non valida", category="invariant_violation")
+        return _failed_update(response, "Risposta JSON del tool Discovery non valida", category="invariant_violation",attempt=attempt)
 
     tool_status = tool_result.status
     if tool_status in {"rate_limited", "partial_rate_limited"}:
@@ -86,18 +114,18 @@ def discovery_node(
             category="operational", retryable=True,
         )
         return _outcome_update(response, DiscoveryOutcome(
-            status="failed", candidates=tool_result.candidates,
+            status=tool_status, candidates=tool_result.candidates,
             message=tool_result.message,
-        ), error=error)
+        ), error=error, attempt=attempt)
     if tool_status == "no_results":
         return _outcome_update(response, DiscoveryOutcome(
             status="no_results", message=tool_result.message,
-        ))
+        ), attempt=attempt)
 
     try:
         selection = DiscoverySelection.model_validate_json(response.content)
     except (TypeError, ValueError):
-        return _failed_update(response, "Classificazione finale Discovery non valida", "invariant_violation")
+        return _failed_update(response, "Classificazione finale Discovery non valida", "invariant_violation",attempt=attempt)
 
     available: dict[tuple[str, int], IssueCandidate] = {}
     for candidate in tool_result.candidates:
@@ -122,5 +150,5 @@ def discovery_node(
             message=selection.message,
         )
     except ValidationError:
-        return _failed_update(response, "Esito Discovery incoerente", "invariant_violation")
-    return _outcome_update(response, outcome)
+        return _failed_update(response, "Esito Discovery incoerente", "invariant_violation", attempt=attempt)
+    return _outcome_update(response, outcome, attempt=attempt)

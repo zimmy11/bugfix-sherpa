@@ -25,6 +25,7 @@ class Settings(BaseModel):
     advisory_model: str = "gemini-3.1-pro"
 
     # Discovery
+    discovery_max_steps: int = Field(default = 10, gt=0)
     github_queries: Optional[list[NonEmptyStr]] = Field(default=None, min_length=1)
     github_language: str = "python"
     github_labels: list[str] = Field(

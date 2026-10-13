@@ -344,7 +344,7 @@ class SearchIssuesResult(BaseModel):
 class DiscoveryOutcome(BaseModel):
     """Validated final search outcome; pending remains a workflow state."""
 
-    status: Literal["completed", "no_results", "failed", "pending"]
+    status: Literal["completed", "no_results", "failed", "pending", "rate_limited", "partial_rate_limited"]
     candidates: list[IssueCandidate] = Field(default_factory=list)
     message: str | None = None
 
@@ -357,6 +357,10 @@ class DiscoveryOutcome(BaseModel):
             raise ValueError("no_results richiede candidate vuote")
         if self.status == "pending" and self.candidates:
             raise ValueError("'status' non può essere pending mentre 'candidates' non è vuota")
+        if self.status == "rate_limited" and self.candidates:
+            raise ValueError("rate_limited richiede candidate vuote")
+        if self.status == "partial_rate_limited" and not self.candidates:
+            raise ValueError("partial_rate_limited richiede candidate")
         return self
 
 class IssueKey(BaseModel):

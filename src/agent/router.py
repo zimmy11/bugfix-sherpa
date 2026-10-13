@@ -39,6 +39,8 @@ def route_after_ingestion(state: BugFixingState, *, settings: Settings) -> str:
     )
 
 def route_after_discovery(state: BugFixingState) -> str:
+    if state.discovery_outcome.status in {"rate_limited", "partial_rate_limited"}:
+        return "failed"
     if state.discovery_outcome.status == "pending":
         if state.messages and getattr(state.messages[-1], "tool_calls", None):
             return "tools"

@@ -146,7 +146,11 @@ def phase_boundary(node: Callable, phase: WorkflowPhase, *, accepts_config: bool
                     raise WorkflowFailure(WorkflowError(phase=phase, category="invariant_violation", message="Errore strutturato non valido")) from None
                 if error.phase != phase:
                     raise WorkflowFailure(WorkflowError(phase=phase, category="invariant_violation", message="Errore associato alla fase errata"))
+                quota_outcome = update.get("discovery_outcome") if phase == "discovery" else None
                 update = {**update, **failure_update(error)}
+                if (isinstance(quota_outcome, DiscoveryOutcome)
+                        and quota_outcome.status in {"rate_limited", "partial_rate_limited"}):
+                    update["discovery_outcome"] = quota_outcome
             elif update.get("status") == "failed" or update.get(f"{phase}_status") == "failed":
                 raise WorkflowFailure(WorkflowError(phase=phase, category="invariant_violation", message="Fallimento privo di errore strutturato"))
             else:

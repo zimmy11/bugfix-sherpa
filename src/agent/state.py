@@ -58,6 +58,7 @@ class BugFixingState(BaseModel):
     # Risultati Discovery
     discovery_outcome: DiscoveryOutcome = Field(default_factory=lambda: DiscoveryOutcome(status="pending"))
     workflow_error: WorkflowError | None = None
+    discovery_attempt: int = Field(default=0, ge=0)
     # issue_candidates: list[IssueCandidate] = Field(
     #     default_factory=list
     # )

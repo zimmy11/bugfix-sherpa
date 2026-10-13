@@ -18,15 +18,16 @@ def candidate():
     )
 
 
-@pytest.mark.parametrize("status", ["completed", "no_results", "failed", "pending"])
+@pytest.mark.parametrize("status", ["completed", "no_results", "failed", "pending", "rate_limited", "partial_rate_limited"])
 def test_valid_outcome_round_trips(candidate, status):
-    candidates = [candidate] if status == "completed" else []
+    candidates = [candidate] if status in {"completed", "partial_rate_limited"} else []
     outcome = DiscoveryOutcome(status=status, candidates=candidates)
     assert DiscoveryOutcome.model_validate_json(outcome.model_dump_json()) == outcome
 
 
 @pytest.mark.parametrize(("status", "has_candidate"), [
     ("completed", False), ("no_results", True), ("pending", True),
+    ("rate_limited", True), ("partial_rate_limited", False),
 ])
 def test_incoherent_outcome_is_rejected(candidate, status, has_candidate):
     with pytest.raises(ValidationError):

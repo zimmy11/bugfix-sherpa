@@ -119,10 +119,12 @@ def test_pending_phase_with_tool_call_can_still_use_tools(phase):
     ("completed", "completed"),
     ("no_results", "no_results"),
     ("failed", "failed"),
+    ("rate_limited", "failed"),
+    ("partial_rate_limited", "failed"),
 ])
 def test_final_discovery_outcome_does_not_route_to_tools(outcome, expected):
     candidate = _accepted_issue_state().selected_issue
-    candidates = [candidate] if outcome == "completed" else []
+    candidates = [candidate] if outcome in {"completed", "partial_rate_limited"} else []
     state = BugFixingState(
         discovery_outcome=DiscoveryOutcome(status=outcome, candidates=candidates),
         messages=[AIMessage(content="", tool_calls=[{

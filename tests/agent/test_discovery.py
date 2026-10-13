@@ -112,6 +112,65 @@ def test_tool_call_keeps_discovery_pending(settings):
     assert update["messages"] == [response]
 
 
+def test_last_allowed_discovery_visit_invokes_llm_and_counts_it(settings):
+    settings.discovery_max_steps = 2
+    call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "search-1",
+    }])
+    state = BugFixingState(
+        discovery_attempt=1,
+        messages=[call, _tool_message("completed", [_candidate(42)])],
+    )
+
+    update = discovery_node(state, FakeLLM(_selection(42)), settings)
+
+    assert update["discovery_attempt"] == 2
+    assert update["discovery_outcome"].status == "completed"
+    assert [item.issue_number for item in update["discovery_outcome"].candidates] == [42]
+
+
+def test_discovery_limit_stops_before_llm_with_structured_error(settings):
+    settings.discovery_max_steps = 2
+
+    class UnexpectedLLM:
+        def invoke(self, messages):
+            pytest.fail("L'LLM non deve essere invocato dopo il limite")
+
+    update = discovery_node(
+        BugFixingState(discovery_attempt=2), UnexpectedLLM(), settings,
+    )
+
+    assert update["discovery_attempt"] == 2
+    assert update["messages"] == []
+    assert update["discovery_outcome"].status == "failed"
+    assert update["status"] == "failed"
+    error = update["workflow_error"]
+    assert isinstance(error, WorkflowError)
+    assert error.phase == "discovery"
+    assert error.category == "operational"
+    assert error.retryable is False
+    assert "passaggi" in error.message
+
+
+def test_tool_call_counts_as_discovery_visit(settings):
+    settings.discovery_max_steps = 2
+    response = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "search-1",
+    }])
+    first = discovery_node(BugFixingState(), FakeLLM(response), settings)
+
+    assert first["discovery_outcome"].status == "pending"
+    assert first["discovery_attempt"] == 1
+
+    state_after_tool = BugFixingState(
+        discovery_attempt=first["discovery_attempt"],
+        messages=[response, _tool_message("completed", [_candidate(42)])],
+    )
+    second = discovery_node(state_after_tool, FakeLLM(_selection(42)), settings)
+    assert second["discovery_attempt"] == 2
+    assert second["discovery_outcome"].status == "completed"
+
+
 @pytest.mark.parametrize("tool_status", ("completed", "partial_results"))
 def test_valid_search_result_reaches_completed(settings, tool_status):
     update = _run(settings, [_tool_message(tool_status, [_candidate(42)])])
@@ -137,7 +196,7 @@ def test_rate_limit_is_failure_even_with_partial_candidates(settings, tool_statu
     candidates = [_candidate(42)] if tool_status == "partial_rate_limited" else []
     update = _run(settings, [_tool_message(tool_status, candidates, "Quota esaurita")])
 
-    assert update["discovery_outcome"].status == "failed"
+    assert update["discovery_outcome"].status == tool_status
     assert update["status"] == "failed"
     error = update["workflow_error"]
     assert isinstance(error, WorkflowError)
@@ -148,6 +207,53 @@ def test_rate_limit_is_failure_even_with_partial_candidates(settings, tool_statu
     assert len(update["discovery_outcome"].candidates) == len(candidates)
 
 
+@pytest.mark.parametrize("tool_status", ("rate_limited", "partial_rate_limited"))
+def test_quota_result_stops_before_llm_and_keeps_explicit_status(settings, tool_status):
+    from src.agent.errors import phase_boundary
+
+    class UnexpectedLLM:
+        def invoke(self, messages):
+            pytest.fail("La quota esaurita deve fermare Discovery prima dell'LLM")
+
+    candidates = [_candidate(42)] if tool_status == "partial_rate_limited" else []
+    call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "search-1",
+    }])
+    state = BugFixingState(
+        discovery_attempt=1,
+        messages=[call, _tool_message(tool_status, candidates, "Quota esaurita")],
+    )
+    update = phase_boundary(
+        lambda current: discovery_node(current, UnexpectedLLM(), settings), "discovery",
+    )(state)
+
+    assert update["discovery_outcome"].status == tool_status
+    assert update["status"] == "failed"
+    assert update["discovery_attempt"] == 1
+    assert len(update["discovery_outcome"].candidates) == len(candidates)
+    assert update["workflow_error"].retryable is True
+
+
+def test_repeated_search_request_fails_without_new_tool_execution(settings):
+    old_call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "old-search",
+    }])
+    state = BugFixingState(
+        discovery_attempt=1,
+        messages=[old_call, _tool_message("completed", [_candidate(42)], call_id="old-search")],
+    )
+    new_call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "second-search",
+    }])
+
+    update = discovery_node(state, FakeLLM(new_call), settings)
+
+    assert update["discovery_outcome"].status == "failed"
+    assert update["status"] == "failed"
+    assert update["workflow_error"].category == "invariant_violation"
+    assert update["discovery_attempt"] == 2
+
+
 def test_latest_search_result_controls_status(settings):
     messages = [
         _tool_message("completed", [_candidate(42)]),
@@ -156,7 +262,7 @@ def test_latest_search_result_controls_status(settings):
 
     update = _run(settings, messages)
 
-    assert update["discovery_outcome"].status == "failed"
+    assert update["discovery_outcome"].status == "rate_limited"
     assert update["status"] == "failed"
     assert update["discovery_outcome"].candidates == []
 
@@ -181,6 +287,51 @@ def test_final_selection_filters_and_orders_current_tool_candidates(settings):
 
     assert [item.issue_number for item in update["discovery_outcome"].candidates] == [44, 42]
     assert update["discovery_outcome"].message == "Selezione conclusa"
+
+
+def test_invented_issue_is_discarded_and_original_tool_data_is_kept(settings):
+    update = _run(
+        settings,
+        [_tool_message("completed", [_candidate(42, title="Original title")])],
+        response=_selection(99, 42),
+    )
+
+    assert update["discovery_outcome"].status == "completed"
+    assert [(item.repository_full_name, item.issue_number, item.title)
+            for item in update["discovery_outcome"].candidates] == [
+                ("owner/project", 42, "Original title"),
+            ]
+
+
+def test_duplicate_selected_keys_appear_only_once(settings):
+    update = _run(
+        settings,
+        [_tool_message("completed", [_candidate(42), _candidate(43)])],
+        response=_selection(43, 43, 42, 42),
+    )
+
+    assert [item.issue_number for item in update["discovery_outcome"].candidates] == [43, 42]
+
+
+def test_same_issue_number_in_different_repositories_has_distinct_keys(settings):
+    second = _candidate(42, title="Other repository issue")
+    second["repository_full_name"] = "other/project"
+    second["url"] = "https://github.com/other/project/issues/42"
+    response = AIMessage(content=json.dumps({
+        "message": "Entrambe pertinenti",
+        "candidates": [
+            {"repository_full_name": "other/project", "issue_number": 42},
+            {"repository_full_name": "owner/project", "issue_number": 42},
+        ],
+    }))
+
+    update = _run(settings, [_tool_message("completed", [_candidate(42), second])],
+                  response=response)
+
+    assert [(item.repository_full_name, item.issue_number)
+            for item in update["discovery_outcome"].candidates] == [
+                ("other/project", 42), ("owner/project", 42),
+            ]
 
 
 def test_old_search_results_cannot_supply_current_selection(settings):
@@ -244,6 +395,17 @@ def test_state_result_limit_cannot_raise_trusted_discovery_limit(settings):
 
     assert settings.github_max_results == 2
     assert [candidate.issue_number for candidate in update["discovery_outcome"].candidates] == [42, 43]
+
+
+def test_selection_order_is_bounded_by_configured_limit(settings):
+    update = _run(
+        settings,
+        [_tool_message("completed", [_candidate(42), _candidate(43), _candidate(44)])],
+        response=_selection(44, 43, 42),
+    )
+
+    assert settings.github_max_results == 2
+    assert [item.issue_number for item in update["discovery_outcome"].candidates] == [44, 43]
 
 
 @pytest.mark.parametrize(
