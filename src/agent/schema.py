@@ -359,6 +359,15 @@ class DiscoveryOutcome(BaseModel):
             raise ValueError("'status' non può essere pending mentre 'candidates' non è vuota")
         return self
 
+class IssueKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    repository_full_name: str
+    issue_number: int = Field(strict=True, gt=0)
+
+class DiscoverySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str
+    candidates: list[IssueKey]
 
 @dataclass(frozen=True)
 class CloneWorkerRequest:

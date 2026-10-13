@@ -61,36 +61,20 @@ approfondita del codice.
 Restituisci esclusivamente un oggetto JSON con questa struttura:
 
 {
-  "status": "completed",
-  "message": "Breve descrizione del risultato della ricerca",
+  "message": "Breve motivazione della selezione",
   "candidates": [
     {
       "repository_full_name": "owner/project",
-      "issue_number": 123,
-      "url": "https://github.com/owner/project/issues/123",
-      "title": "Titolo dell'issue",
-      "labels": ["good first issue"],
-      "assignees": [],
-      "updated_at": "data restituita da GitHub",
-      "repository_stats": {
-        "stars": 420,
-        "forks": 35,
-        "open_issues": 28,
-        "default_branch": "main",
-        "last_pushed_at": "data restituita da GitHub",
-        "has_issues": true,
-        "license": "MIT"
-      }
+      "issue_number": 123
     }
   ]
 }
 
 ## Regole del formato
 
-- Usa `status` uguale a `no_results` e `candidates` vuota se non trovi
-  candidate adeguate.
-- Per ciascuna candidata copia soltanto i campi restituiti dal tool, senza
-  aggiungere punteggi o motivazioni al record.
+- Se non trovi candidate adeguate, restituisci `candidates` come lista vuota.
+- Ogni candidata contiene soltanto `repository_full_name` e `issue_number`.
+- Metti le candidate nell'ordine di preferenza.
 - Non aggiungere candidate non presenti nei risultati dei tool.
 - Non modificare URL, nomi o numeri restituiti da GitHub.
 - Non racchiudere il JSON in blocchi Markdown.

@@ -113,3 +113,20 @@ def test_pending_phase_with_tool_call_can_still_use_tools(phase):
     }])])
     router = route_after_discovery if phase == "discovery" else route_after_triage
     assert router(state) == "tools"
+
+
+@pytest.mark.parametrize("outcome,expected", [
+    ("completed", "completed"),
+    ("no_results", "no_results"),
+    ("failed", "failed"),
+])
+def test_final_discovery_outcome_does_not_route_to_tools(outcome, expected):
+    candidate = _accepted_issue_state().selected_issue
+    candidates = [candidate] if outcome == "completed" else []
+    state = BugFixingState(
+        discovery_outcome=DiscoveryOutcome(status=outcome, candidates=candidates),
+        messages=[AIMessage(content="", tool_calls=[{
+            "name": "search_github_issues", "args": {}, "id": "stale-call",
+        }])],
+    )
+    assert route_after_discovery(state) == expected

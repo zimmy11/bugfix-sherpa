@@ -42,10 +42,10 @@ def _candidate(number, title="Bug"):
     }
 
 
-def _tool_message(status, candidates, message=""):
+def _tool_message(status, candidates, message="", call_id="search-1"):
     return ToolMessage(
         name="search_github_issues",
-        tool_call_id="search-1",
+        tool_call_id=call_id,
         content=json.dumps({
             "status": status,
             "message": message,
@@ -54,9 +54,37 @@ def _tool_message(status, candidates, message=""):
     )
 
 
+def _selection(*numbers):
+    return AIMessage(content=json.dumps({
+        "message": "Selezione conclusa",
+        "candidates": [
+            {"repository_full_name": "owner/project", "issue_number": number}
+            for number in numbers
+        ],
+    }))
+
+
 def _run(settings, messages, response=None):
-    state = BugFixingState(messages=messages)
-    llm = FakeLLM(response or AIMessage(content="done"))
+    history = []
+    for message in messages:
+        if isinstance(message, ToolMessage):
+            history.append(AIMessage(content="", tool_calls=[{
+                "name": "search_github_issues", "args": {}, "id": message.tool_call_id,
+            }]))
+        history.append(message)
+    if response is None:
+        numbers = []
+        for message in reversed(messages):
+            if isinstance(message, ToolMessage):
+                try:
+                    numbers = [item["issue_number"] for item in json.loads(message.content)["candidates"]
+                               if isinstance(item.get("issue_number"), int)]
+                except (TypeError, ValueError, KeyError):
+                    pass
+                break
+        response = _selection(*numbers)
+    state = BugFixingState(messages=history)
+    llm = FakeLLM(response)
     return discovery_node(state, llm, settings)
 
 
@@ -91,7 +119,7 @@ def test_valid_search_result_reaches_completed(settings, tool_status):
     assert update["discovery_outcome"].status == "completed"
     assert update["status"] == "running"
     assert update["workflow_error"] is None
-    assert update["discovery_outcome"].message == ""
+    assert update["discovery_outcome"].message == "Selezione conclusa"
     assert len(update["discovery_outcome"].candidates) == 1
     assert isinstance(update["discovery_outcome"].candidates[0], IssueCandidate)
 
@@ -123,7 +151,7 @@ def test_rate_limit_is_failure_even_with_partial_candidates(settings, tool_statu
 def test_latest_search_result_controls_status(settings):
     messages = [
         _tool_message("completed", [_candidate(42)]),
-        _tool_message("rate_limited", [], "Quota esaurita"),
+        _tool_message("rate_limited", [], "Quota esaurita", call_id="search-2"),
     ]
 
     update = _run(settings, messages)
@@ -146,15 +174,73 @@ def test_candidates_are_deduplicated_and_bounded(settings):
     assert first["discovery_outcome"].candidates == second["discovery_outcome"].candidates
 
 
+def test_final_selection_filters_and_orders_current_tool_candidates(settings):
+    update = _run(settings, [_tool_message(
+        "completed", [_candidate(42), _candidate(43), _candidate(44)],
+    )], response=_selection(44, 42))
+
+    assert [item.issue_number for item in update["discovery_outcome"].candidates] == [44, 42]
+    assert update["discovery_outcome"].message == "Selezione conclusa"
+
+
+def test_old_search_results_cannot_supply_current_selection(settings):
+    messages = [
+        _tool_message("completed", [_candidate(42)], call_id="old"),
+        _tool_message("completed", [_candidate(43)], call_id="new"),
+    ]
+    update = _run(settings, messages, response=_selection(42, 43))
+
+    assert [item.issue_number for item in update["discovery_outcome"].candidates] == [43]
+
+
+def test_repeated_discovery_pass_uses_only_new_search_result(settings):
+    first_call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "first",
+    }])
+    first_result = _tool_message("completed", [_candidate(42)], call_id="first")
+    second_call = AIMessage(content="", tool_calls=[{
+        "name": "search_github_issues", "args": {}, "id": "second",
+    }])
+    second_result = _tool_message("completed", [_candidate(42), _candidate(43)], call_id="second")
+
+    first = discovery_node(
+        BugFixingState(messages=[first_call, first_result]), FakeLLM(_selection(42)), settings,
+    )
+    second = discovery_node(
+        BugFixingState(messages=[first_call, first_result, first["messages"][0],
+                                  second_call, second_result]),
+        FakeLLM(_selection(43, 42, 43)), settings,
+    )
+
+    assert [item.issue_number for item in first["discovery_outcome"].candidates] == [42]
+    assert [item.issue_number for item in second["discovery_outcome"].candidates] == [43, 42]
+
+
+def test_empty_final_selection_produces_no_results(settings):
+    update = _run(settings, [_tool_message("completed", [_candidate(42)])],
+                  response=_selection())
+    assert update["discovery_outcome"].status == "no_results"
+    assert update["discovery_outcome"].candidates == []
+
+
+def test_invalid_final_selection_fails_closed(settings):
+    update = _run(settings, [_tool_message("completed", [_candidate(42)])],
+                  response=AIMessage(content="done"))
+    assert update["discovery_outcome"].status == "failed"
+    assert update["workflow_error"].category == "invariant_violation"
+
+
 def test_state_result_limit_cannot_raise_trusted_discovery_limit(settings):
     state = BugFixingState(
         max_results=99,
-        messages=[_tool_message(
+        messages=[AIMessage(content="", tool_calls=[{
+            "name": "search_github_issues", "args": {}, "id": "search-1",
+        }]), _tool_message(
             "completed", [_candidate(42), _candidate(43), _candidate(44)],
         )],
     )
 
-    update = discovery_node(state, FakeLLM(AIMessage(content="done")), settings)
+    update = discovery_node(state, FakeLLM(_selection(42, 43, 44)), settings)
 
     assert settings.github_max_results == 2
     assert [candidate.issue_number for candidate in update["discovery_outcome"].candidates] == [42, 43]
@@ -190,7 +276,7 @@ def test_invalid_tool_result_fails_closed(settings, message):
 
 
 def test_llm_text_without_tool_result_is_failure(settings):
-    update = _run(settings, [])
+    update = _run(settings, [], response=_selection())
 
     assert update["discovery_outcome"].status == "failed"
     assert update["status"] == "failed"
@@ -199,7 +285,7 @@ def test_llm_text_without_tool_result_is_failure(settings):
 
 
 def test_missing_tool_result_produces_a_structured_invariant_error(settings):
-    update = _run(settings, [])
+    update = _run(settings, [], response=_selection())
     error = update["workflow_error"]
     assert isinstance(error, WorkflowError)
     assert error.phase == "discovery"
@@ -209,13 +295,15 @@ def test_missing_tool_result_produces_a_structured_invariant_error(settings):
 
 def test_success_clears_a_previous_workflow_error(settings):
     state = BugFixingState(
-        messages=[_tool_message("completed", [_candidate(42)])],
+        messages=[AIMessage(content="", tool_calls=[{
+            "name": "search_github_issues", "args": {}, "id": "search-1",
+        }]), _tool_message("completed", [_candidate(42)])],
         workflow_error=WorkflowError(
             phase="discovery", category="operational",
             message="Temporary failure", retryable=True,
         ),
     )
-    update = discovery_node(state, FakeLLM(AIMessage(content="done")), settings)
+    update = discovery_node(state, FakeLLM(_selection(42)), settings)
     assert update["workflow_error"] is None
     restored = BugFixingState.model_validate({**state.model_dump(), **update})
     assert restored.workflow_error is None
@@ -292,7 +380,7 @@ def test_real_search_tool_message_is_accepted_by_discovery(settings):
     graph.add_node("search", ToolNode([tool]))
     graph.add_edge(START, "search")
     tool_message = graph.compile().invoke(BugFixingState(messages=[call]))["messages"][-1]
-    update = _run(settings, [call, tool_message])
+    update = _run(settings, [call, tool_message], response=_selection(42))
 
     assert update["discovery_outcome"].status == "completed", tool_message.content
     assert [item.issue_number for item in update["discovery_outcome"].candidates] == [42]
