@@ -44,6 +44,22 @@ def test_triage_rejects_url_different_from_candidate() -> None:
         route_after_triage(state)
 
 
+def test_triage_rejects_candidate_not_in_discovery_results() -> None:
+    state = _accepted_issue_state()
+    state.issue_candidates = []
+
+    with pytest.raises(ValueError, match="non presente nelle candidate"):
+        route_after_triage(state)
+
+
+def test_triage_rejects_branch_inconsistent_with_candidate() -> None:
+    state = _accepted_issue_state()
+    state.default_branch = "develop"
+
+    with pytest.raises(ValueError, match="Default branch incoerente"):
+        route_after_triage(state)
+
+
 def test_ingestion_rejects_completed_snapshot_without_sha(tmp_path) -> None:
     state = _accepted_issue_state()
     state.ingestion_status = "completed"

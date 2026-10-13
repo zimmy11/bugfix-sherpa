@@ -1,6 +1,7 @@
 .env*
 *.md
 *.MD
+*.md
 .venv/
 __pycache__/
 src/bugfix*

@@ -522,7 +522,7 @@ def validate_ingestion_snapshot(state: BugFixingState, settings: Settings) -> No
         len(path.split("/")) > settings.max_repository_tree_depth
         for path in exposed_paths
     ):
-        raise ValueError("ProfonditÃ  dei path oltre il limite")
+        raise ValueError("Profondità dei path oltre il limite")
     if any(
         len(content) > settings.max_guide_chars
         for content in state.repository_guides.values()

@@ -1,7 +1,7 @@
 """Input and counter bounds for the workflow state."""
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
@@ -10,6 +10,7 @@ from src.agent.state import (
     build_initial_state,
     investigation_collection_update,
 )
+from src.agent.schema import IssueCandidate, SherpaReport, WorkflowError
 from src.utils.config import Settings
 
 
@@ -164,6 +165,75 @@ def test_initial_state_json_does_not_contain_settings_credentials_or_workspace()
     assert secret not in serialized
     assert "TEST_ONLY_API_KEY" not in serialized
     assert "private/workspace" not in serialized
+
+
+def test_empty_state_round_trips_through_json():
+    original = BugFixingState()
+
+    restored = BugFixingState.model_validate_json(original.model_dump_json())
+
+    assert restored == original
+    assert restored.messages == []
+    assert restored.issue_candidates == []
+    assert restored.inspection_status == "not_started"
+
+
+def test_populated_state_round_trips_with_messages_and_nested_models():
+    candidate = IssueCandidate(
+        repository_full_name="owner/project",
+        issue_number=42,
+        title="Bug",
+        url="https://github.com/owner/project/issues/42",
+        updated_at="2026-01-01T00:00:00+00:00",
+        repository_stats={
+            "stars": 100, "forks": 1, "open_issues": 2,
+            "default_branch": "main", "last_pushed_at": "2026-01-01T00:00:00+00:00",
+            "has_issues": True,
+        },
+    )
+    report = SherpaReport(
+        repository_full_name="owner/project", issue_number=42,
+        issue_url=candidate.url, branch="main", commit_sha="a" * 40,
+        problem_summary="Unexpected exception", investigation_status="inconclusive",
+        declared_reproduction_steps=["Submit empty input"],
+        investigation_limits=["Tests not run"],
+    )
+    original = BugFixingState(
+        messages=[HumanMessage(content="Find a bug"), AIMessage(content="Found one")],
+        issue_candidates=[candidate], selected_issue=candidate,
+        repository_stats=candidate.repository_stats,
+        report=report,
+        workflow_error=WorkflowError(
+            phase="investigation", category="operational",
+            message="Analysis unavailable", retryable=True,
+        ),
+        declared_reproduction_steps=["Submit empty input"],
+        verified_reproduction_steps=[],
+    )
+
+    restored = BugFixingState.model_validate_json(original.model_dump_json())
+
+    assert restored == original
+    assert isinstance(restored.messages[0], HumanMessage)
+    assert isinstance(restored.messages[1], AIMessage)
+    assert isinstance(restored.issue_candidates[0], IssueCandidate)
+    assert restored.report.report_id == report.report_id
+    assert isinstance(restored.workflow_error, WorkflowError)
+
+
+def test_partial_updates_allow_a_legitimate_intermediate_state():
+    initial = BugFixingState()
+    discovery_started = BugFixingState.model_validate({
+        **initial.model_dump(), "status": "running", "current_node": "discovery",
+    })
+    clone_started = BugFixingState.model_validate({
+        **discovery_started.model_dump(), "ingestion_status": "cloning",
+        "ingestion_attempts": 1,
+    })
+
+    assert clone_started.ingestion_status == "cloning"
+    assert clone_started.inspection_status == "not_started"
+    assert clone_started.local_repo_path is None
 
 
 def test_repeated_investigation_snapshot_does_not_duplicate_collections():

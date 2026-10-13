@@ -3,6 +3,8 @@ import pytest
 
 from src.utils.config import Settings
 from src.utils import repository as service
+from src.tools import repository as repository_tools
+from src.tools.repository import build_repository_tools
 
 
 def test_invalid_clone_input_is_not_retryable(tmp_path):
@@ -38,3 +40,42 @@ def test_invalid_clone_fields_are_classified_before_filesystem_work(tmp_path, fi
     ))
     assert result.error.category == "invalid_input"
     assert result.error.retryable is False
+
+
+def test_repository_tool_binds_trusted_settings_and_exposes_no_operational_overrides(
+    tmp_path, monkeypatch,
+):
+    settings = Settings(
+        github_token="TRUSTED_GITHUB_TOKEN",
+        google_api_key="TRUSTED_GOOGLE_API_KEY",
+        workspace_root=tmp_path / "trusted-workspace",
+        max_repository_file_bytes=2048,
+    )
+    calls = []
+
+    class Result:
+        def model_dump(self, mode):
+            assert mode == "json"
+            return {"status": "cloned"}
+
+    def clone_service(**kwargs):
+        calls.append(kwargs)
+        return Result()
+
+    monkeypatch.setattr(repository_tools, "clone_repository_service", clone_service)
+    clone_tool = build_repository_tools(settings)["clone_selected_repository"]
+
+    assert set(clone_tool.args_schema.model_fields) == {
+        "repository_full_name", "issue_number", "default_branch",
+    }
+    assert clone_tool.invoke({
+        "repository_full_name": "owner/project",
+        "issue_number": 7,
+        "default_branch": "main",
+    }) == {"status": "cloned"}
+    assert calls == [{
+        "repository_full_name": "owner/project",
+        "issue_number": 7,
+        "default_branch": "main",
+        "settings": settings,
+    }]

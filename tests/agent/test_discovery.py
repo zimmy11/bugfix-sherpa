@@ -134,6 +134,20 @@ def test_candidates_are_deduplicated_and_bounded(settings):
     assert first["issue_candidates"] == second["issue_candidates"]
 
 
+def test_state_result_limit_cannot_raise_trusted_discovery_limit(settings):
+    state = BugFixingState(
+        max_results=99,
+        messages=[_tool_message(
+            "completed", [_candidate(42), _candidate(43), _candidate(44)],
+        )],
+    )
+
+    update = discovery_node(state, FakeLLM(AIMessage(content="done")), settings)
+
+    assert settings.github_max_results == 2
+    assert [candidate.issue_number for candidate in update["issue_candidates"]] == [42, 43]
+
+
 @pytest.mark.parametrize(
     "message",
     [
