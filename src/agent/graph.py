@@ -82,6 +82,9 @@ class SherpaAgent:
             repository_inactivity_days=(
                 self.settings.repository_inactivity_days
             ),
+            triage_max_comments_per_issue=self.settings.triage_max_comments_per_issue,
+            triage_max_timeline_events_per_issue=self.settings.triage_max_timeline_events_per_issue,
+            triage_max_total_chars=self.settings.triage_max_total_chars,
         )
         repository_tools = build_repository_tools(self.settings)
         configured_tools = {

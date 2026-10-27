@@ -187,3 +187,68 @@ def test_failure_clears_stale_selection_but_preserves_candidates(settings, candi
 def test_unexpected_programming_error_is_not_disguised_as_retryable(settings, candidate):
     update = triage_node(BugFixingState(discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate])), FakeLLM(error=RuntimeError("bug")), settings)
     _assert_failure(update, category="invariant_violation", retryable=False)
+
+
+def test_tool_call_cannot_request_an_issue_outside_discovery(settings, candidate):
+    call = AIMessage(content="", tool_calls=[{
+        "name": "read_issue_thread", "id": "thread-1",
+        "args": {"issue_candidates": [{
+            "repository_full_name": "owner/project", "issue_number": 99,
+        }]},
+    }])
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(
+        status="completed", candidates=[candidate],
+    ))
+    update = triage_node(state, FakeLLM(call), settings)
+    _assert_failure(update)
+
+
+@pytest.mark.parametrize("thread", [
+    {"repository_full_name": "owner/project", "issue_number": 99},
+    {"repository_full_name": "owner/project", "issue_number": 42,
+     "comments": [{"body": "x"}, {"body": "y"}]},
+    {"repository_full_name": "owner/project", "issue_number": 42,
+     "comments": "invalid"},
+])
+def test_tool_result_is_validated_before_model_call(settings, candidate, thread):
+    settings.triage_max_comments_per_issue = 1
+    state = BugFixingState(
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]),
+        messages=[_thread(json.dumps([thread]))],
+    )
+    update = triage_node(state, FakeLLM(error=AssertionError("LLM must not run")), settings)
+    _assert_failure(update)
+
+
+def test_oversized_model_context_is_rejected(settings, candidate):
+    settings.triage_max_total_chars = 100
+    state = BugFixingState(discovery_outcome=DiscoveryOutcome(
+        status="completed", candidates=[candidate],
+    ))
+    update = triage_node(state, FakeLLM(error=AssertionError("LLM must not run")), settings)
+    _assert_failure(update)
+
+
+def test_truncation_details_reach_the_model(settings, candidate):
+    class InspectingLLM:
+        def invoke(self, messages):
+            assert '"comments_has_more": true' in messages[-1].content
+            assert '"last_included_comment_id": 17' in messages[-1].content
+            return _decision(status="rejected")
+
+    thread = {
+        "repository_full_name": "owner/project", "issue_number": 42,
+        "comments": [{"id": 17, "body": "Partial"}],
+        "truncation": {
+            "comments_has_more": True, "timeline_has_more": False,
+            "body_has_more": False, "last_included_comment_id": 17,
+            "comments_included": 1, "timeline_events_included": 0,
+            "body_chars_included": 0, "truncated_comment_id": None,
+            "reason": "triage_max_comments_per_issue", "candidates_omitted": 0,
+        },
+    }
+    state = BugFixingState(
+        discovery_outcome=DiscoveryOutcome(status="completed", candidates=[candidate]),
+        messages=[_thread(json.dumps([thread]))],
+    )
+    assert triage_node(state, InspectingLLM(), settings)["triage_status"] == "rejected"

@@ -23,6 +23,9 @@ POSITIVE_LIMITS = (
     "api_retry_max_seconds",
     "test_timeout_seconds",
     "repository_inactivity_days",
+    "triage_max_comments_per_issue",
+    "triage_max_timeline_events_per_issue",
+    "triage_max_total_chars",
 )
 
 ENV_LIMITS = (
@@ -36,6 +39,9 @@ ENV_LIMITS = (
     ("MAX_FILE_CHUNK_LINES", "max_file_chunk_lines"),
     ("MAX_FILE_CHUNK_CHARS", "max_file_chunk_chars"),
     ("MAX_SEARCH_RESULTS", "max_search_results"),
+    ("TRIAGE_MAX_COMMENTS_PER_ISSUE", "triage_max_comments_per_issue"),
+    ("TRIAGE_MAX_TIMELINE_EVENTS_PER_ISSUE", "triage_max_timeline_events_per_issue"),
+    ("TRIAGE_MAX_TOTAL_CHARS", "triage_max_total_chars"),
 )
 
 

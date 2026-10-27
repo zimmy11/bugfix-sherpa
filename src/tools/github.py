@@ -1,4 +1,6 @@
 """Read-only GitHub tools used by discovery and triage nodes."""
+import json
+from itertools import islice
 from typing import Any
 from datetime import UTC, datetime, timedelta
 from langchain_core.tools import tool
@@ -20,6 +22,21 @@ RELEVANT_TIMELINE_EVENTS = {
     "labeled",
     "unlabeled",
 }
+
+
+def _serialized_chars(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+
+
+def _largest_fitting_prefix(text: str, fits) -> int:
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if fits(text[:middle]):
+            low = middle
+        else:
+            high = middle - 1
+    return low
 
 
 def _serialize_timeline_event(event) -> dict[str, Any] | None:
@@ -112,7 +129,11 @@ def build_github_tools(
     limit,
     min_stars,
     repository_inactivity_days,
+    triage_max_comments_per_issue=20,
+    triage_max_timeline_events_per_issue=30,
+    triage_max_total_chars=30000,
     excluded_labels=None,
+
 ):
     excluded_label_names = {
         label.strip().casefold() for label in (excluded_labels or [])
@@ -186,6 +207,7 @@ def build_github_tools(
                 next_page[query] += 1
 
                 for issue in issues:
+                    # Discards Closed Issues
                     if issue.state != "open":
                         continue
                     repository_full_name = issue.repository_url.removeprefix(
@@ -330,9 +352,9 @@ def build_github_tools(
 
         Returns:
             A list of serializable dictionaries, one per input candidate. Each
-            successful result contains the issue title, body, state, URL, labels,
-            assignees, creation and update timestamps, and the complete public comment
-            thread in chronological order. It also contains ``timeline_events`` and
+            successful result contains the issue title, bounded body, state, URL, labels,
+            assignees, creation and update timestamps, and bounded comments in
+            chronological order. ``truncation`` records omitted data. It also contains ``timeline_events`` and
             normalized ``work_claim_signals`` that the triage model must use to detect
             work already started by another contributor.
 
@@ -344,7 +366,9 @@ def build_github_tools(
             with that candidate.
         """
         all_issue_threads = []
-        for issue_candidate in issue_candidates:
+        # Reserve room for counters and truncation reasons updated after reading.
+        content_budget = max(0, triage_max_total_chars - 128)
+        for issue_candidate in issue_candidates[:limit]:
             repository_full_name = issue_candidate.get("repository_full_name")
             issue_number = issue_candidate.get("issue_number")
 
@@ -387,46 +411,11 @@ def build_github_tools(
                 repository = client.get_repo(repository_full_name)
                 issue = repository.get_issue(number=issue_number)
 
-                comments = []
-                for comment in issue.get_comments():
-                    comments.append(
-                        {
-                            "author": (
-                                comment.user.login
-                                if comment.user
-                                else None
-                            ),
-                            "body": comment.body or "",
-                            "created_at": (
-                                comment.created_at.isoformat()
-                                if comment.created_at
-                                else None
-                            ),
-                            "updated_at": (
-                                comment.updated_at.isoformat()
-                                if comment.updated_at
-                                else None
-                            ),
-                        }
-                    )
-
-                timeline_events = []
-                work_claim_signals = []
-                for event in issue.get_timeline():
-                    serialized_event = _serialize_timeline_event(event)
-                    if serialized_event is None:
-                        continue
-
-                    timeline_events.append(serialized_event)
-                    signal = _work_claim_signal(serialized_event)
-                    if signal is not None:
-                        work_claim_signals.append(signal)
-
-                all_issue_threads.append({
+                thread = {
                     "repository_full_name": repository.full_name,
                     "issue_number": issue.number,
                     "title": issue.title,
-                    "body": issue.body or "",
+                    "body": "",
                     "state": issue.state,
                     "url": issue.html_url,
                     "labels": [label.name for label in issue.labels],
@@ -434,9 +423,21 @@ def build_github_tools(
                         assignee.login
                         for assignee in issue.assignees
                     ],
-                    "comments": comments,
-                    "timeline_events": timeline_events,
-                    "work_claim_signals": work_claim_signals,
+                    "comments": [],
+                    "timeline_events": [],
+                    "work_claim_signals": [],
+                    "truncation": {
+                        "comments_included": 0,
+                        "comments_has_more": False,
+                        "last_included_comment_id": None,
+                        "timeline_events_included": 0,
+                        "timeline_has_more": False,
+                        "body_chars_included": 0,
+                        "body_has_more": False,
+                        "truncated_comment_id": None,
+                        "reason": None,
+                        "candidates_omitted": max(0, len(issue_candidates) - limit),
+                    },
                     "created_at": (
                         issue.created_at.isoformat()
                         if issue.created_at
@@ -447,7 +448,80 @@ def build_github_tools(
                         if issue.updated_at
                         else None
                     ),
-                })
+                }
+                if _serialized_chars([*all_issue_threads, thread]) > triage_max_total_chars:
+                    raise ValueError("Budget Triage insufficiente per i metadati del thread")
+
+                meta = thread["truncation"]
+                body = issue.body or ""
+                body_length = _largest_fitting_prefix(
+                    body, lambda part: _serialized_chars([
+                        *all_issue_threads, {**thread, "body": part}
+                    ]) <= content_budget,
+                )
+                thread["body"] = body[:body_length]
+                meta["body_chars_included"] = body_length
+                if body_length < len(body):
+                    meta["body_has_more"] = True
+                    meta["reason"] = "triage_max_total_chars"
+
+                for comment in issue.get_comments()[:triage_max_comments_per_issue + 1]:
+                    if len(thread["comments"]) >= triage_max_comments_per_issue:
+                        meta["comments_has_more"] = True
+                        meta["reason"] = meta["reason"] or "triage_max_comments_per_issue"
+                        break
+                    item = {
+                        "id": comment.id,
+                        "author": comment.user.login if comment.user else None,
+                        "body": "",
+                        "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                        "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+                    }
+                    thread["comments"].append(item)
+                    if _serialized_chars([*all_issue_threads, thread]) > content_budget:
+                        thread["comments"].pop()
+                        meta["comments_has_more"] = True
+                        meta["reason"] = "triage_max_total_chars"
+                        break
+                    comment_body = comment.body or ""
+                    length = _largest_fitting_prefix(
+                        comment_body, lambda part: _serialized_chars([
+                            *all_issue_threads, thread
+                        ]) + _serialized_chars(part) - _serialized_chars("") <= content_budget,
+                    )
+                    item["body"] = comment_body[:length]
+                    meta["comments_included"] += 1
+                    meta["last_included_comment_id"] = comment.id
+                    if length < len(comment_body):
+                        meta["truncated_comment_id"] = comment.id
+                        meta["comments_has_more"] = True
+                        meta["reason"] = "triage_max_total_chars"
+                        break
+
+                for event_index, event in enumerate(islice(
+                    issue.get_timeline(), triage_max_timeline_events_per_issue + 1
+                )):
+                    if event_index >= triage_max_timeline_events_per_issue:
+                        meta["timeline_has_more"] = True
+                        meta["reason"] = meta["reason"] or "triage_max_timeline_events_per_issue"
+                        break
+                    serialized_event = _serialize_timeline_event(event)
+                    if serialized_event is None:
+                        continue
+                    thread["timeline_events"].append(serialized_event)
+                    signal = _work_claim_signal(serialized_event)
+                    if signal is not None:
+                        thread["work_claim_signals"].append(signal)
+                    if _serialized_chars([*all_issue_threads, thread]) > content_budget:
+                        thread["timeline_events"].pop()
+                        if signal is not None:
+                            thread["work_claim_signals"].pop()
+                        meta["timeline_has_more"] = True
+                        meta["reason"] = "triage_max_total_chars"
+                        break
+                    meta["timeline_events_included"] += 1
+
+                all_issue_threads.append(thread)
             except GithubException as exc:
                 # Never expose raw provider diagnostics: they can contain
                 # credentials in formats that redaction cannot recognize.
@@ -482,6 +556,9 @@ def build_github_tools(
                     "retryable": rate_limited or 500 <= exc.status < 600,
                     "workflow_error": classify_exception(exc, "triage").model_dump(mode="json"),
                 })
+
+        if _serialized_chars(all_issue_threads) > triage_max_total_chars:
+            raise ValueError("Il risultato Triage supera il budget di caratteri")
         return all_issue_threads
     
     return {

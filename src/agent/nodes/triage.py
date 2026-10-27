@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage, AIMessage
 from src.agent.schema import TriageDecision, WorkflowError
 from src.agent.state import BugFixingState
 from src.prompts.triage import TRIAGE_SYSTEM_PROMPT as SYSTEM_PROMPT
@@ -16,6 +16,79 @@ def _message_content(message):
     if isinstance(message.content, str):
         return json.loads(message.content)
     return message.content
+
+def _allowed_keys(state: BugFixingState) -> set[tuple[str, int]]:
+    return {(item.repository_full_name, item.issue_number)
+            for item in state.discovery_outcome.candidates}
+
+
+def _validate_tool_call(response: AIMessage, state: BugFixingState, settings: Settings) -> bool:
+    calls = response.tool_calls
+    if len(calls) != 1 or calls[0].get("name") != "read_issue_thread":
+        return False
+    requested = calls[0].get("args", {}).get("issue_candidates")
+    if not isinstance(requested, list) or not 0 < len(requested) <= min(
+        settings.github_max_results, len(state.discovery_outcome.candidates)
+    ):
+        return False
+    allowed = _allowed_keys(state)
+    seen = set()
+    for item in requested:
+        if not isinstance(item, dict) or set(item) != {"repository_full_name", "issue_number"}:
+            return False
+        name, number = item["repository_full_name"], item["issue_number"]
+        if not isinstance(name, str) or not isinstance(number, int) or isinstance(number, bool):
+            return False
+        key = (name, number)
+        if key not in allowed or key in seen:
+            return False
+        seen.add(key)
+    return True
+
+
+def _validate_content(result, state: BugFixingState, settings: Settings) -> list[dict]:
+    """Reject untrusted tool output before it becomes model context."""
+    if not isinstance(result, list) or len(result) > min(
+        settings.github_max_results, len(state.discovery_outcome.candidates)
+    ):
+        raise ValueError("Numero di thread non valido")
+    allowed = _allowed_keys(state)
+    seen = set()
+    for thread in result:
+        if not isinstance(thread, dict):
+            raise ValueError("Thread non valido")
+        name, number = thread.get("repository_full_name"), thread.get("issue_number")
+        if not isinstance(name, str) or not isinstance(number, int) or isinstance(number, bool):
+            raise ValueError("Identita del thread non valida")
+        key = (name, number)
+        if key not in allowed or key in seen:
+            raise ValueError("Thread estraneo o duplicato")
+        seen.add(key)
+        if "error" in thread:
+            continue
+        if not isinstance(thread.get("body", ""), str):
+            raise ValueError("Body del thread non valido")
+        for field, maximum in (("comments", settings.triage_max_comments_per_issue),
+                               ("timeline_events", settings.triage_max_timeline_events_per_issue)):
+            entries = thread.get(field, [])
+            if not isinstance(entries, list) or len(entries) > maximum or not all(
+                isinstance(entry, dict) for entry in entries
+            ):
+                raise ValueError(f"{field} non valido")
+        if not all(isinstance(comment.get("body", ""), str)
+                   for comment in thread.get("comments", [])):
+            raise ValueError("Testo del commento non valido")
+        signals = thread.get("work_claim_signals", [])
+        if not isinstance(signals, list) or not all(isinstance(item, dict) for item in signals):
+            raise ValueError("Segnali del thread non validi")
+        truncation = thread.get("truncation")
+        if truncation is not None:
+            if not isinstance(truncation, dict) or not all(
+                isinstance(truncation.get(field), bool)
+                for field in ("comments_has_more", "timeline_has_more", "body_has_more")
+            ):
+                raise ValueError("Metadati di troncamento non validi")
+    return result
 
 def _update_failed(
     response: BaseMessage | None,
@@ -59,7 +132,7 @@ def triage_node(
     # precedente del Triage.
     thread_by_key = {}
     print("Attraversamento Nodo Triage con stato")
-    
+
     for message in reversed(state.messages):
         if not isinstance(message, ToolMessage):
             continue
@@ -68,12 +141,13 @@ def triage_node(
 
         try:
             tool_result = _message_content(message)
+            validated_result = _validate_content(tool_result, state, settings)
         except (TypeError, ValueError):
             return _update_failed(None, "JSON del tool Triage non valido", "invariant_violation")
-        if not isinstance(tool_result, list):
+        if not isinstance(validated_result, list):
             return _update_failed(None, "Risposta del tool Triage non valida", "invariant_violation")
 
-        for candidate in tool_result:
+        for candidate in validated_result:
             if not isinstance(candidate, dict):
                 return _update_failed(None, "Thread Triage non valido", "invariant_violation")
 
@@ -106,6 +180,8 @@ def triage_node(
                 "work_claim_signals", []
             )
             enriched_candidate["issue_state"] = thread.get("state")
+            if "truncation" in thread:
+                enriched_candidate["truncation"] = thread["truncation"]
         enriched_candidates.append(enriched_candidate)
 
     candidates_json = json.dumps(
@@ -113,6 +189,8 @@ def triage_node(
         ensure_ascii=False,
         indent=2,
     )
+    if len(candidates_json) > settings.triage_max_total_chars:
+        return _update_failed(None, "Contesto Triage oltre il limite di caratteri", "invariant_violation")
 
     # La richiesta finale è sempre l'ultimo messaggio. Il modello può quindi
     # decidere se emettere una tool_call oppure produrre la selezione finale.
@@ -148,6 +226,8 @@ def triage_node(
     # Se il modello ha richiesto read_issue_thread, il router porterà il
     # messaggio a triage_tools. Non bisogna ancora scegliere l'issue.
     if result.tool_calls:
+        if threads_loaded or not isinstance(result, AIMessage) or not _validate_tool_call(result, state, settings):
+            return _update_failed(result, "Chiamata al tool Triage non autorizzata", "invariant_violation")
         return {
             "messages": [result],
             "current_node": "triage",

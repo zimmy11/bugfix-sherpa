@@ -39,6 +39,11 @@ class Settings(BaseModel):
     github_min_stars: int = 100
     repository_inactivity_days: int = Field(default = 7, gt=0)
 
+    # Triage: limiti per la lettura dei thread e il contesto del modello
+    triage_max_comments_per_issue: int = Field(default=20, gt=0, strict=True)
+    triage_max_timeline_events_per_issue: int = Field(default=30, gt=0, strict=True)
+    triage_max_total_chars: int = Field(default=30000, gt=0, strict=True)
+
     # Ingestion
     # Workspace locale
     repository_clone_depth: int = Field(default=1, gt=0)
@@ -214,6 +219,15 @@ def load_settings() -> Settings:
                 "REPOSITORY_INACTIVITY_DAYS",
                 "7",
             )
+        ),
+        triage_max_comments_per_issue=int(
+            os.getenv("TRIAGE_MAX_COMMENTS_PER_ISSUE", "20")
+        ),
+        triage_max_timeline_events_per_issue=int(
+            os.getenv("TRIAGE_MAX_TIMELINE_EVENTS_PER_ISSUE", "30")
+        ),
+        triage_max_total_chars=int(
+            os.getenv("TRIAGE_MAX_TOTAL_CHARS", "30000")
         ),
 
         workspace_root=Path(
